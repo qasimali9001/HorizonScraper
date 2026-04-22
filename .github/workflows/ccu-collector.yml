@@ -17,7 +17,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "Calling ${API_BASE_URL}/jobs/ccuCollector/runOnce"
-          curl -sS -X POST "${API_BASE_URL}/jobs/ccuCollector/runOnce" \
+          curl -fsS -X POST "${API_BASE_URL}/jobs/ccuCollector/runOnce" \
             -H "x-job-secret: ${JOB_SECRET}" \
-            -H "content-type: application/json"
+            -H "content-type: application/json" \
+            -w "\nhttp_status=%{http_code}\n"
 

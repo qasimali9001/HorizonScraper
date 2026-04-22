@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "@horizon-scraper/db";
 import { normalizeWorldUrl } from "../lib/worldUrl.js";
 import { getCCU } from "../scraper/horizon.js";
+import { getWorldTitleFromUrl } from "../scraper/worldTitle.js";
 import type { World, CCUSnapshot } from "@prisma/client";
 
 const router = Router();
@@ -36,8 +37,9 @@ router.post("/", async (req, res) => {
   const rawUrl = String(req.body?.url ?? "");
   const url = normalizeWorldUrl(rawUrl);
 
-  // V1: name defaults to world id slug; can improve later by scraping title.
-  const name = new URL(url).pathname.split("/").filter(Boolean)[1] ?? "world";
+  const fallbackName = new URL(url).pathname.split("/").filter(Boolean)[1] ?? "world";
+  const scrapedName = await getWorldTitleFromUrl(url);
+  const name = scrapedName ?? fallbackName;
 
   const created = await prisma.world.create({
     data: { url, name, isActive: true },
@@ -112,6 +114,28 @@ router.post("/:id/scrapeTest", async (req, res) => {
 
   const result = await getCCU(world.url);
   res.json(result);
+});
+
+router.post("/:id/refreshTitle", async (req, res) => {
+  const id = String(req.params.id);
+  const world = await prisma.world.findUnique({ where: { id } });
+  if (!world) {
+    res.status(404).json({ message: "world_not_found" });
+    return;
+  }
+
+  const scraped = await getWorldTitleFromUrl(world.url);
+  if (!scraped) {
+    res.status(409).json({ message: "title_unavailable" });
+    return;
+  }
+
+  const updated = await prisma.world.update({
+    where: { id },
+    data: { name: scraped },
+  });
+
+  res.json(updated);
 });
 
 export default router;

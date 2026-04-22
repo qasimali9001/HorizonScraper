@@ -4,6 +4,7 @@ import express from "express";
 import cron from "node-cron";
 import { runCCUCollectorOnce } from "./jobs/ccuCollector.js";
 import { seedWorldsFromFile } from "./jobs/seedWorlds.js";
+import { ensurePlaywrightChromiumInstalled } from "./playwrightBootstrap.js";
 import worldsRouter from "./routes/worlds.js";
 
 const app = express();
@@ -37,33 +38,38 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 });
 
 const port = Number(process.env.PORT ?? 3001);
-app.listen(port, () => {
-  // eslint-disable-next-line no-console
-  console.log(`API listening on http://localhost:${port}`);
-});
 
-const seedWorlds = (process.env.SEED_WORLDS ?? "false").toLowerCase() === "true";
-if (seedWorlds) {
-  seedWorldsFromFile()
-    .then(({ inserted, skipped }) => {
-      // eslint-disable-next-line no-console
-      console.log(`[seed] worlds.seed.json inserted=${inserted} skipped=${skipped}`);
-    })
-    .catch((err) => {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[seed] failed: ${err instanceof Error ? err.message : String(err)}`
-      );
-    });
-}
+void (async () => {
+  await ensurePlaywrightChromiumInstalled();
 
-const cronEnabled = (process.env.CRON_ENABLED ?? "true").toLowerCase() === "true";
-const schedule = process.env.CRON_SCHEDULE ?? "*/30 * * * *";
-if (cronEnabled) {
-  cron.schedule(schedule, async () => {
-    await runCCUCollectorOnce();
+  app.listen(port, () => {
+    // eslint-disable-next-line no-console
+    console.log(`API listening on http://localhost:${port}`);
   });
-  // eslint-disable-next-line no-console
-  console.log(`[cron] enabled schedule="${schedule}"`);
-}
+
+  const seedWorlds = (process.env.SEED_WORLDS ?? "false").toLowerCase() === "true";
+  if (seedWorlds) {
+    seedWorldsFromFile()
+      .then(({ inserted, updated, skipped }) => {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[seed] worlds.seed.json inserted=${inserted} updated=${updated} skipped=${skipped}`
+        );
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn(`[seed] failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+  }
+
+  const cronEnabled = (process.env.CRON_ENABLED ?? "true").toLowerCase() === "true";
+  const schedule = process.env.CRON_SCHEDULE ?? "*/30 * * * *";
+  if (cronEnabled) {
+    cron.schedule(schedule, async () => {
+      await runCCUCollectorOnce();
+    });
+    // eslint-disable-next-line no-console
+    console.log(`[cron] enabled schedule="${schedule}"`);
+  }
+})();
 
