@@ -1,0 +1,4 @@
+# Railway/Nixpacks: Chromium needs system libraries (e.g. libglib) not present on slim Node images.
+# This extends the default install phase so the built image can run Playwright.
+[phases.install]
+cmds = ["...", "cd apps/api && npx --yes playwright install-deps chromium"]
