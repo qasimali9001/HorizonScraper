@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 import cron from "node-cron";
 import { runCCUCollectorOnce } from "./jobs/ccuCollector.js";
+import { refreshAllWorldNames } from "./jobs/refreshWorldNames.js";
 import { seedWorldsFromFile } from "./jobs/seedWorlds.js";
 import { ensurePlaywrightChromiumInstalled } from "./playwrightBootstrap.js";
 import worldsRouter from "./routes/worlds.js";
@@ -18,17 +19,27 @@ app.get("/health", (_req, res) => {
 
 app.use("/worlds", worldsRouter);
 
-app.post("/jobs/ccuCollector/runOnce", async (req, res) => {
+function assertJobSecret(req: express.Request, res: express.Response): boolean {
   const expected = process.env.JOB_SECRET;
-  if (expected) {
-    const provided = req.header("x-job-secret");
-    if (!provided || provided !== expected) {
-      res.status(401).json({ message: "unauthorized" });
-      return;
-    }
+  if (!expected) return true;
+  const provided = req.header("x-job-secret");
+  if (!provided || provided !== expected) {
+    res.status(401).json({ message: "unauthorized" });
+    return false;
   }
+  return true;
+}
+
+app.post("/jobs/ccuCollector/runOnce", async (req, res) => {
+  if (!assertJobSecret(req, res)) return;
   await runCCUCollectorOnce();
   res.json({ ok: true });
+});
+
+app.post("/jobs/worldNames/refreshAll", async (req, res) => {
+  if (!assertJobSecret(req, res)) return;
+  const summary = await refreshAllWorldNames();
+  res.json({ ok: true, ...summary });
 });
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
