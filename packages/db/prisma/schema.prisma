@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model World {
+  id               String        @id @default(uuid())
+  name             String
+  url              String        @unique
+  createdAt        DateTime      @default(now())
+  isActive         Boolean       @default(true)
+  lastSuccessfulAt DateTime?
+  lastError        String?
+
+  snapshots        CCUSnapshot[]
+}
+
+model CCUSnapshot {
+  id         String   @id @default(uuid())
+  worldId    String
+  world      World    @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  ccu        Int
+  capturedAt DateTime @default(now())
+
+  @@index([worldId, capturedAt])
+}
+
