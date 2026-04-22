@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "@horizon-scraper/db";
 import { normalizeWorldUrl } from "../lib/worldUrl.js";
 import { getCCU } from "../scraper/horizon.js";
+import type { World, CCUSnapshot } from "@prisma/client";
 
 const router = Router();
 
@@ -17,7 +18,7 @@ router.get("/", async (_req, res) => {
   });
 
   res.json(
-    worlds.map((w) => ({
+    worlds.map((w: World & { snapshots: CCUSnapshot[] }) => ({
       id: w.id,
       name: w.name,
       url: w.url,
@@ -82,7 +83,7 @@ router.get("/:id/ccu", async (req, res) => {
   });
 
   res.json(
-    snapshots.map((s) => ({
+    snapshots.map((s: CCUSnapshot) => ({
       ccu: s.ccu,
       capturedAt: s.capturedAt,
     }))
