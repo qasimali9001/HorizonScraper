@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { chromiumLaunchOptions } from "./playwrightChromium.js";
 
 let attemptedInstall = false;
 
@@ -31,13 +32,12 @@ export async function ensurePlaywrightChromiumInstalled(): Promise<void> {
   const apiRoot = path.resolve(__dirname, "..");
 
   try {
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch(chromiumLaunchOptions());
     await browser.close();
     return;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const looksMissingExecutable =
-      msg.includes("Executable doesn't exist") || msg.includes("BrowserType.launch");
+    const looksMissingExecutable = msg.includes("Executable doesn't exist");
 
     if (!looksMissingExecutable) {
       // eslint-disable-next-line no-console
@@ -52,7 +52,7 @@ export async function ensurePlaywrightChromiumInstalled(): Promise<void> {
   try {
     await run("npx", ["--yes", "playwright", "install", "chromium"], apiRoot);
 
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch(chromiumLaunchOptions());
     await browser.close();
 
     // eslint-disable-next-line no-console
