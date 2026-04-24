@@ -257,6 +257,19 @@ a {
   .table td {
     padding: 10px 8px;
   }
+
+  /* Reduce clutter on small screens */
+  .hideMobile {
+    display: none !important;
+  }
+
+  .table td {
+    white-space: normal;
+  }
+
+  .worldTitle {
+    font-weight: 800;
+  }
 }
 
 .imgDark {

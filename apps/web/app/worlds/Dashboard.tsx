@@ -445,7 +445,7 @@ export function Dashboard() {
                       active={sortBy}
                       dir={sortDir}
                       onToggle={(c) => toggleSort(c)}
-                      className="num"
+                      className="num hideMobile"
                     />
                     <SortableTH
                       label="24h Change"
@@ -453,7 +453,7 @@ export function Dashboard() {
                       active={sortBy}
                       dir={sortDir}
                       onToggle={(c) => toggleSort(c)}
-                      className="num"
+                      className="num hideMobile"
                     />
                     <SortableTH
                       label="24h"
@@ -462,6 +462,7 @@ export function Dashboard() {
                       dir={sortDir}
                       onToggle={(c) => toggleSort(c)}
                       sortable={false}
+                      className="hideMobile"
                     />
                     <SortableTH
                       label="Status"
@@ -483,7 +484,7 @@ export function Dashboard() {
                         <td style={{ maxWidth: 1 }}>
                           <div style={{ display: "grid", gap: 4 }}>
                             <Link href={`/world/${w.id}`} style={{ color: "var(--link)", fontWeight: 700 }}>
-                              {w.name}
+                              <span className="worldTitle">{w.name}</span>
                             </Link>
                             <div className="muted" style={{ overflow: "hidden", textOverflow: "ellipsis" }} title={w.url}>
                               {w.url}
@@ -491,9 +492,9 @@ export function Dashboard() {
                           </div>
                         </td>
                         <td className="num">{fmtInt(current ?? null)}</td>
-                        <td className="num">{fmtInt(peak24h ?? null)}</td>
-                        <td className={`num ${changeClass}`}>{fmtPct(change)}</td>
-                        <td>
+                        <td className="num hideMobile">{fmtInt(peak24h ?? null)}</td>
+                        <td className={`num ${changeClass} hideMobile`}>{fmtPct(change)}</td>
+                        <td className="hideMobile">
                           <Sparkline values={spark} />
                         </td>
                         <td>
@@ -509,12 +510,12 @@ export function Dashboard() {
                             <span className="pill muted">Pending</span>
                           )}
 
-                          <span style={{ marginLeft: 10 }}>
+                          <span style={{ marginLeft: 10, display: "inline-flex", gap: 8 }}>
                             {w.isActive === false ? (
                               <button
                                 className="button"
                                 onClick={() => setTracking(w.id, true)}
-                                style={{ padding: "4px 8px" }}
+                                style={{ padding: "8px 10px" }}
                               >
                                 Resume
                               </button>
@@ -522,7 +523,7 @@ export function Dashboard() {
                               <button
                                 className="button"
                                 onClick={() => setTracking(w.id, false)}
-                                style={{ padding: "4px 8px" }}
+                                style={{ padding: "8px 10px" }}
                               >
                                 Stop
                               </button>
