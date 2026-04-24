@@ -23,8 +23,55 @@ type WorldStats24h = {
   change24hPct: number | null;
 };
 
+type CollectorStatus = {
+  ok: true;
+  running: boolean;
+  lastStartedAt: string | null;
+  lastFinishedAt: string | null;
+};
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+
+function SortableTH({
+  label,
+  col,
+  active,
+  dir,
+  onToggle,
+  sortable = true,
+  style,
+  className,
+}: {
+  label: string;
+  col: "name" | "current" | "peak24h" | "change24h" | "trend" | "status";
+  active: string;
+  dir: "asc" | "desc";
+  onToggle: (col: "name" | "current" | "peak24h" | "change24h" | "trend" | "status") => void;
+  sortable?: boolean;
+  style?: React.CSSProperties;
+  className?: string;
+}) {
+  const isActive = active === col;
+  const indicator = isActive ? (dir === "asc" ? " ▲" : " ▼") : "";
+  return (
+    <th
+      className={className}
+      style={{
+        ...(style ?? {}),
+        cursor: sortable ? "pointer" : "default",
+        userSelect: "none",
+      }}
+      onClick={sortable ? () => onToggle(col) : undefined}
+      title={sortable ? "Click to sort" : undefined}
+    >
+      {label}
+      <span className="muted" style={{ marginLeft: 4 }}>
+        {indicator}
+      </span>
+    </th>
+  );
+}
 
 function fmtTime(value: string | null) {
   if (!value) return null;
@@ -60,6 +107,49 @@ function compute24hStats(snapshots: Snapshot[], fallbackCurrent: number | null):
   return { current: current ?? fallbackCurrent, peak24h, change24hPct };
 }
 
+function downsample(values: number[], maxPoints: number): number[] {
+  if (values.length <= maxPoints) return values;
+  const out: number[] = [];
+  for (let i = 0; i < maxPoints; i++) {
+    const idx = Math.floor((i * (values.length - 1)) / (maxPoints - 1));
+    out.push(values[idx]!);
+  }
+  return out;
+}
+
+function Sparkline({ values }: { values: number[] }) {
+  const w = 110;
+  const h = 28;
+  if (values.length < 2) {
+    return <span className="muted">—</span>;
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+
+  const points = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * (w - 2) + 1;
+      const y = h - 1 - ((v - min) / span) * (h - 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label="24 hour trend">
+      <polyline
+        points={points}
+        fill="none"
+        stroke="rgba(96,165,250,0.9)"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -83,7 +173,34 @@ export function Dashboard() {
   const [newUrl, setNewUrl] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const [stats24h, setStats24h] = useState<Record<string, WorldStats24h>>({});
+  const [sparks24h, setSparks24h] = useState<Record<string, number[]>>({});
   const [statsLoading, setStatsLoading] = useState(false);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "ok" | "error" | "pending">("all");
+  const [sortBy, setSortBy] = useState<
+    "name" | "current" | "peak24h" | "change24h" | "trend" | "status"
+  >("current");
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+  const [isUpdatingCCU, setIsUpdatingCCU] = useState(false);
+  const [jobSecret, setJobSecret] = useState<string>("");
+
+  function toggleSort(col: "name" | "current" | "peak24h" | "change24h" | "trend" | "status") {
+    if (sortBy === col) {
+      setSortDir(sortDir === "desc" ? "asc" : "desc");
+      return;
+    }
+    setSortBy(col);
+    // Default direction per column
+    const defaultDir: Record<typeof col, "asc" | "desc"> = {
+      name: "asc",
+      current: "desc",
+      peak24h: "desc",
+      change24h: "desc",
+      trend: "desc",
+      status: "desc",
+    } as any;
+    setSortDir(defaultDir[col] ?? "desc");
+  }
 
   const client = useMemo(
     () =>
@@ -104,18 +221,86 @@ export function Dashboard() {
     refresh().catch((e) => setError(e?.message ?? "Failed to load worlds"));
   }, []);
 
+  const rows = useMemo(() => {
+    if (!worlds) return [];
+    const q = query.trim().toLowerCase();
+
+    const base = worlds
+      .map((w) => {
+        const s = stats24h[w.id];
+        const current = s?.current ?? w.latestCCU;
+        const peak24h = s?.peak24h ?? null;
+        const change24hPct = s?.change24hPct ?? null;
+        const status: "ok" | "error" | "pending" = w.lastError
+          ? "error"
+          : w.lastSuccessfulAt
+            ? "ok"
+            : "pending";
+
+        const spark = sparks24h[w.id] ?? [];
+        return { w, current, peak24h, change24hPct, status, spark };
+      })
+      .filter(({ w, status }) => {
+        if (
+          q &&
+          !w.name.toLowerCase().includes(q) &&
+          !w.url.toLowerCase().includes(q)
+        )
+          return false;
+        if (statusFilter === "all") return true;
+        return status === statusFilter;
+      });
+
+    const dir = sortDir === "asc" ? 1 : -1;
+    const by = sortBy;
+
+    const statusRank = (s: "ok" | "pending" | "error") => (s === "error" ? 2 : s === "pending" ? 1 : 0);
+
+    base.sort((a, b) => {
+      if (by === "name") return a.w.name.localeCompare(b.w.name) * dir;
+      if (by === "current") return ((a.current ?? -1) - (b.current ?? -1)) * dir;
+      if (by === "peak24h") return ((a.peak24h ?? -1) - (b.peak24h ?? -1)) * dir;
+      if (by === "change24h")
+        return ((a.change24hPct ?? -999999) - (b.change24hPct ?? -999999)) * dir;
+      if (by === "trend") {
+        // Sort by net delta over spark window if available.
+        const da =
+          a.spark.length >= 2 ? a.spark[a.spark.length - 1]! - a.spark[0]! : -999999;
+        const db =
+          b.spark.length >= 2 ? b.spark[b.spark.length - 1]! - b.spark[0]! : -999999;
+        return (da - db) * dir;
+      }
+      // status
+      return (statusRank(a.status) - statusRank(b.status)) * dir;
+    });
+
+    return base;
+  }, [worlds, stats24h, sparks24h, query, statusFilter, sortBy, sortDir]);
+
   async function refresh24hStats(ws: World[]) {
     setStatsLoading(true);
     try {
       const results = await mapWithConcurrency(ws, 4, async (w) => {
         const res = await client.get<Snapshot[]>(`/worlds/${w.id}/ccu`, {
-          params: { range: "24h" },
+          params: { range: "24h", includePrev: "1" },
         });
-        return [w.id, compute24hStats(res.data, w.latestCCU)] as const;
+        const now = Date.now();
+        const since = now - 24 * 60 * 60 * 1000;
+        const within = res.data
+          .map((s) => ({ ts: Date.parse(s.capturedAt), ccu: s.ccu }))
+          .filter((s) => Number.isFinite(s.ts) && s.ts >= since)
+          .map((s) => s.ccu);
+        const spark = downsample(within, 28);
+        return [w.id, compute24hStats(res.data, w.latestCCU), spark] as const;
       });
       const next: Record<string, WorldStats24h> = {};
-      for (const [id, s] of results) next[id] = s;
+      const sparks: Record<string, number[]> = {};
+      for (const [id, s, spark] of results) {
+        next[id] = s;
+        sparks[id] = spark;
+      }
       setStats24h(next);
+      setSparks24h(sparks);
     } catch (e: any) {
       setError(e?.response?.data?.message ?? e?.message ?? "Failed to load 24h stats");
     } finally {
@@ -139,50 +324,179 @@ export function Dashboard() {
     }
   }
 
+  async function setTracking(worldId: string, isActive: boolean) {
+    const expected = isActive ? "STARTTHECOUNT" : "STOPTHECOUNT";
+    const password = globalThis.prompt(`Type "${expected}" to confirm:`) ?? "";
+    if (password.trim() !== expected) return;
+
+    await client.post(`/worlds/${worldId}/setActive`, { isActive, password: expected });
+    await refresh();
+  }
+  function loadJobSecret(): string {
+    try {
+      return globalThis.localStorage?.getItem("jobSecret") ?? "";
+    } catch {
+      return "";
+    }
+  }
+
+  function saveJobSecret(secret: string) {
+    try {
+      globalThis.localStorage?.setItem("jobSecret", secret);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function waitForCollectorToFinish(startedAt: number): Promise<void> {
+    // Poll until lastFinishedAt is after startedAt (or running flips false).
+    const maxMs = 3 * 60 * 1000;
+    const end = Date.now() + maxMs;
+    while (Date.now() < end) {
+      const res = await client.get<CollectorStatus>("/jobs/ccuCollector/status", {
+        headers: jobSecret ? { "x-job-secret": jobSecret } : undefined,
+      });
+      const lastFinished = res.data.lastFinishedAt ? Date.parse(res.data.lastFinishedAt) : NaN;
+      if (!res.data.running && Number.isFinite(lastFinished) && lastFinished >= startedAt) return;
+      if (!res.data.running && !Number.isFinite(lastFinished)) return;
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    throw new Error("collector_timeout");
+  }
+
+  async function onUpdateCCUs() {
+    setIsUpdatingCCU(true);
+    setError(null);
+    try {
+      let secret = jobSecret || loadJobSecret();
+      if (!secret) {
+        secret = globalThis.prompt("Enter JOB_SECRET to run the collector:") ?? "";
+      }
+      secret = secret.trim();
+      if (!secret) throw new Error("missing_job_secret");
+      setJobSecret(secret);
+      saveJobSecret(secret);
+
+      const startedAt = Date.now();
+      await client.post(
+        "/jobs/ccuCollector/runOnce",
+        {},
+        { headers: { "x-job-secret": secret, "content-type": "application/json" } }
+      );
+
+      await waitForCollectorToFinish(startedAt);
+      await refresh();
+    } catch (e: any) {
+      setError(e?.response?.data?.message ?? e?.message ?? "Failed to update CCUs");
+    } finally {
+      setIsUpdatingCCU(false);
+    }
+  }
+
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <div className="card">
         <div className="cardHeader">
-          <h2>Worlds (SteamCharts-style)</h2>
+          <h2>Worlds</h2>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button
-              className="button"
-              onClick={async () => {
-                const res = await client.get<World[]>("/worlds");
-                setWorlds(res.data);
-                await refresh24hStats(res.data);
-              }}
-              disabled={worlds == null || statsLoading}
-            >
-              {statsLoading ? "Refreshing…" : "Refresh"}
-            </button>
+            <input
+              className="input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search worlds…"
+              style={{ width: 220 }}
+            />
           </div>
         </div>
 
         <div className="cardBody">
           {error ? <p style={{ color: "var(--negative)" }}>{error}</p> : null}
 
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+            <span className="muted" style={{ fontSize: 12 }}>
+              Status:
+            </span>
+            <select
+              className="input"
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as "all" | "ok" | "error" | "pending")
+              }
+              style={{ width: 160 }}
+            >
+              <option value="all">All</option>
+              <option value="ok">OK</option>
+              <option value="pending">Pending</option>
+              <option value="error">Error</option>
+            </select>
+            {statsLoading ? (
+              <span className="muted" style={{ fontSize: 12 }}>
+                Loading 24h stats…
+              </span>
+            ) : null}
+          </div>
+
           {worlds == null ? (
             <p className="muted">Loading…</p>
-          ) : worlds.length === 0 ? (
-            <p className="muted">No worlds yet.</p>
+          ) : rows.length === 0 ? (
+            <p className="muted">No worlds match your filters.</p>
           ) : (
             <div className="tableWrap">
               <table className="table">
                 <thead>
                   <tr>
-                    <th style={{ width: "48%" }}>World</th>
-                    <th className="num">Current Players</th>
-                    <th className="num">24h Peak</th>
-                    <th className="num">24h Change</th>
-                    <th>Last Sample</th>
-                    <th>Status</th>
+                    <SortableTH
+                      label="World"
+                      col="name"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                      style={{ width: "48%" }}
+                    />
+                    <SortableTH
+                      label="Current Players"
+                      col="current"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                      className="num"
+                    />
+                    <SortableTH
+                      label="24h Peak"
+                      col="peak24h"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                      className="num"
+                    />
+                    <SortableTH
+                      label="24h Change"
+                      col="change24h"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                      className="num"
+                    />
+                    <SortableTH
+                      label="24h"
+                      col="trend"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                      sortable={false}
+                    />
+                    <SortableTH
+                      label="Status"
+                      col="status"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                    />
                   </tr>
                 </thead>
                 <tbody>
-                  {worlds.map((w) => {
-                    const s = stats24h[w.id];
-                    const change = s?.change24hPct ?? null;
+                  {rows.map(({ w, current, peak24h, change24hPct, spark }) => {
+                    const change = change24hPct ?? null;
                     const changeClass =
                       change == null ? "" : change >= 0 ? "deltaPos" : "deltaNeg";
 
@@ -198,20 +512,44 @@ export function Dashboard() {
                             </div>
                           </div>
                         </td>
-                        <td className="num">{fmtInt(s?.current ?? w.latestCCU)}</td>
-                        <td className="num">{fmtInt(s?.peak24h ?? null)}</td>
+                        <td className="num">{fmtInt(current ?? null)}</td>
+                        <td className="num">{fmtInt(peak24h ?? null)}</td>
                         <td className={`num ${changeClass}`}>{fmtPct(change)}</td>
-                        <td>{fmtTime(w.latestCapturedAt) ?? "—"}</td>
+                        <td>
+                          <Sparkline values={spark} />
+                        </td>
                         <td>
                           {w.lastError ? (
                             <span className="pill" style={{ color: "var(--negative)" }}>
                               Error
                             </span>
+                          ) : w.isActive === false ? (
+                            <span className="pill muted">Not tracked</span>
                           ) : w.lastSuccessfulAt ? (
                             <span className="pill">OK</span>
                           ) : (
                             <span className="pill muted">Pending</span>
                           )}
+
+                          <span style={{ marginLeft: 10 }}>
+                            {w.isActive === false ? (
+                              <button
+                                className="button"
+                                onClick={() => setTracking(w.id, true)}
+                                style={{ padding: "4px 8px" }}
+                              >
+                                Resume
+                              </button>
+                            ) : (
+                              <button
+                                className="button"
+                                onClick={() => setTracking(w.id, false)}
+                                style={{ padding: "4px 8px" }}
+                              >
+                                Stop
+                              </button>
+                            )}
+                          </span>
                         </td>
                       </tr>
                     );
@@ -251,6 +589,17 @@ export function Dashboard() {
             Tip: after you add worlds, use Refresh to fetch 24h stats.
           </p>
         </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button
+          className="button buttonPrimary"
+          onClick={() => onUpdateCCUs()}
+          disabled={isUpdatingCCU || statsLoading}
+          style={{ padding: "10px 14px" }}
+        >
+          {isUpdatingCCU ? "Updating CCUs…" : "Update CCUs"}
+        </button>
       </div>
     </div>
   );

@@ -34,6 +34,16 @@ let ccuCollectorRunning = false;
 let ccuCollectorLastStartedAt: Date | null = null;
 let ccuCollectorLastFinishedAt: Date | null = null;
 
+app.get("/jobs/ccuCollector/status", (req, res) => {
+  if (!assertJobSecret(req, res)) return;
+  res.json({
+    ok: true,
+    running: ccuCollectorRunning,
+    lastStartedAt: ccuCollectorLastStartedAt,
+    lastFinishedAt: ccuCollectorLastFinishedAt,
+  });
+});
+
 app.post("/jobs/ccuCollector/runOnce", async (req, res) => {
   if (!assertJobSecret(req, res)) return;
 

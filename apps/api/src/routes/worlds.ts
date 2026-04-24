@@ -3,6 +3,7 @@ import { prisma } from "@horizon-scraper/db";
 import { normalizeWorldUrl } from "../lib/worldUrl.js";
 import { getCCU } from "../scraper/horizon.js";
 import { getWorldTitleFromUrl } from "../scraper/worldTitle.js";
+import { verifyWorldUrl } from "../scraper/verifyWorld.js";
 import type { World, CCUSnapshot } from "@prisma/client";
 
 const router = Router();
@@ -37,6 +38,18 @@ router.post("/", async (req, res) => {
   const rawUrl = String(req.body?.url ?? "");
   const url = normalizeWorldUrl(rawUrl);
 
+  const existing = await prisma.world.findUnique({ where: { url } });
+  if (existing) {
+    res.status(200).json(existing);
+    return;
+  }
+
+  const verified = await verifyWorldUrl(url);
+  if (!verified.ok) {
+    res.status(409).json({ message: `world_not_verifiable:${verified.reason}` });
+    return;
+  }
+
   const fallbackName = new URL(url).pathname.split("/").filter(Boolean)[1] ?? "world";
   const scrapedName = await getWorldTitleFromUrl(url);
   const name = scrapedName ?? fallbackName;
@@ -52,6 +65,24 @@ router.delete("/:id", async (req, res) => {
   const id = String(req.params.id);
   await prisma.world.delete({ where: { id } });
   res.json({ ok: true });
+});
+
+router.post("/:id/setActive", async (req, res) => {
+  const id = String(req.params.id);
+  const desired = Boolean(req.body?.isActive);
+  const password = String(req.body?.password ?? "");
+
+  const expected = desired ? "STARTTHECOUNT" : "STOPTHECOUNT";
+  if (password !== expected) {
+    res.status(401).json({ message: "invalid_password" });
+    return;
+  }
+
+  const updated = await prisma.world.update({
+    where: { id },
+    data: { isActive: desired },
+  });
+  res.json(updated);
 });
 
 function rangeToSince(range: string | undefined): Date | null {
@@ -75,6 +106,9 @@ router.get("/:id/ccu", async (req, res) => {
   const since = rangeToSince(
     typeof req.query.range === "string" ? req.query.range : undefined
   );
+  const includePrev =
+    typeof req.query.includePrev === "string" &&
+    ["1", "true", "yes"].includes(req.query.includePrev.toLowerCase());
 
   const snapshots = await prisma.cCUSnapshot.findMany({
     where: {
@@ -84,8 +118,17 @@ router.get("/:id/ccu", async (req, res) => {
     orderBy: { capturedAt: "asc" },
   });
 
+  let prev: CCUSnapshot | null = null;
+  if (since && includePrev) {
+    prev = await prisma.cCUSnapshot.findFirst({
+      where: { worldId: id, capturedAt: { lt: since } },
+      orderBy: { capturedAt: "desc" },
+    });
+  }
+
+  const combined = prev ? [prev, ...snapshots] : snapshots;
   res.json(
-    snapshots.map((s: CCUSnapshot) => ({
+    combined.map((s: CCUSnapshot) => ({
       ccu: s.ccu,
       capturedAt: s.capturedAt,
     }))

@@ -65,7 +65,12 @@ export function WorldDetail({ worldId }: { worldId: string }) {
     setData(null);
     setError(null);
     client
-      .get<Snapshot[]>(`/worlds/${worldId}/ccu`, { params: { range } })
+      .get<Snapshot[]>(`/worlds/${worldId}/ccu`, {
+        params: {
+          range,
+          ...(range === "24h" || range === "7d" || range === "30d" ? { includePrev: "1" } : {}),
+        },
+      })
       .then((res) => setData(res.data))
       .catch((e) => setError(e?.message ?? "Failed to load CCU"));
   }, [worldId, range]);
@@ -154,45 +159,14 @@ export function WorldDetail({ worldId }: { worldId: string }) {
             ) : data.length === 0 ? (
               <p className="muted">No snapshots yet.</p>
             ) : (
-              <CCULineChart data={data} />
+              <CCULineChart
+                data={data}
+                windowHours={range === "24h" ? 24 : range === "7d" ? 7 * 24 : range === "30d" ? 30 * 24 : null}
+                tickStepHours={range === "24h" ? 4 : null}
+              />
             )}
           </div>
         </div>
-
-        {data && data.length > 0 ? (
-          <div className="card">
-            <div className="cardHeader">
-              <h2>Recent samples</h2>
-              <span className="muted" style={{ fontSize: 12 }}>
-                Showing last 50 points
-              </span>
-            </div>
-            <div className="cardBody">
-              <div className="tableWrap">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th className="num">Players</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data
-                      .slice(-50)
-                      .slice()
-                      .reverse()
-                      .map((s: Snapshot) => (
-                        <tr key={s.capturedAt}>
-                          <td>{fmtTime(s.capturedAt)}</td>
-                          <td className="num">{fmtInt(s.ccu)}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        ) : null}
       </div>
     </div>
   );
