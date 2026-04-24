@@ -10,18 +10,56 @@ type Snapshot = {
   capturedAt: string;
 };
 
+type World = {
+  id: string;
+  name: string;
+  url: string;
+  lastError: string | null;
+  lastSuccessfulAt: string | null;
+  latestCCU: number | null;
+  latestCapturedAt: string | null;
+};
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
 
 const ranges = ["24h", "7d", "30d", "all"] as const;
 type Range = (typeof ranges)[number];
 
+function fmtInt(v: number | null) {
+  if (v == null) return "—";
+  return new Intl.NumberFormat().format(v);
+}
+
+function fmtTime(value: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString();
+}
+
+function computePeak(data: Snapshot[]): number | null {
+  if (data.length === 0) return null;
+  let max = data[0]!.ccu;
+  for (const d of data) if (d.ccu > max) max = d.ccu;
+  return max;
+}
+
 export function WorldDetail({ worldId }: { worldId: string }) {
   const [range, setRange] = useState<Range>("24h");
   const [data, setData] = useState<Snapshot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [world, setWorld] = useState<World | null>(null);
 
   const client = useMemo(() => axios.create({ baseURL: API_BASE }), []);
+
+  useEffect(() => {
+    setError(null);
+    client
+      .get<World[]>("/worlds")
+      .then((res) => setWorld(res.data.find((w) => w.id === worldId) ?? null))
+      .catch(() => setWorld(null));
+  }, [worldId]);
 
   useEffect(() => {
     setData(null);
@@ -32,56 +70,129 @@ export function WorldDetail({ worldId }: { worldId: string }) {
       .catch((e) => setError(e?.message ?? "Failed to load CCU"));
   }, [worldId, range]);
 
-  return (
-    <div style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <div>
-          <Link href="/worlds">← Back</Link>
-          <h1 style={{ marginTop: 10, marginBottom: 0 }}>World detail</h1>
-          <p style={{ marginTop: 8, color: "rgba(255,255,255,0.7)" }}>
-            World ID: <code>{worldId}</code>
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {ranges.map((r) => (
-            <button
-              key={r}
-              onClick={() => setRange(r)}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 10,
-                border: "1px solid rgba(255,255,255,0.16)",
-                background: range === r ? "#2563eb" : "rgba(255,255,255,0.06)",
-                color: "white",
-                cursor: "pointer",
-              }}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
-      </div>
+  const current = data && data.length > 0 ? data[data.length - 1]!.ccu : world?.latestCCU ?? null;
+  const peak = data ? computePeak(data) : null;
 
-      <div
-        style={{
-          marginTop: 18,
-          border: "1px solid rgba(255,255,255,0.12)",
-          borderRadius: 12,
-          padding: 14,
-          background: "rgba(0,0,0,0.12)",
-        }}
-      >
-        {error ? (
-          <p style={{ color: "#fca5a5" }}>{error}</p>
-        ) : data == null ? (
-          <p style={{ color: "rgba(255,255,255,0.7)" }}>Loading…</p>
-        ) : data.length === 0 ? (
-          <p style={{ color: "rgba(255,255,255,0.7)" }}>
-            No snapshots yet. Run the collector job and refresh.
+  return (
+    <div className="container">
+      <header className="topbar">
+        <div className="brand">
+          <h1>{world?.name ?? "World"}</h1>
+          <p className="muted">
+            {world?.url ? (
+              <a href={world.url} target="_blank" rel="noreferrer">
+                {world.url}
+              </a>
+            ) : (
+              <>
+                World ID: <code>{worldId}</code>
+              </>
+            )}
           </p>
-        ) : (
-          <CCULineChart data={data} />
-        )}
+        </div>
+        <nav className="nav">
+          <Link href="/worlds">← Back</Link>
+        </nav>
+      </header>
+
+      <div style={{ display: "grid", gap: 14 }}>
+        <div className="card">
+          <div className="cardBody" style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div className="pill">
+                <span className="muted">Current players</span>
+                <span style={{ fontWeight: 800 }}>{fmtInt(current)}</span>
+              </div>
+              <div className="pill">
+                <span className="muted">Peak ({range})</span>
+                <span style={{ fontWeight: 800 }}>{fmtInt(peak)}</span>
+              </div>
+              <div className="pill">
+                <span className="muted">Latest sample</span>
+                <span style={{ fontWeight: 700 }}>{fmtTime(world?.latestCapturedAt ?? null)}</span>
+              </div>
+              <div className="pill">
+                <span className="muted">Status</span>
+                <span style={{ fontWeight: 800, color: world?.lastError ? "var(--negative)" : "inherit" }}>
+                  {world?.lastError ? "Error" : world?.lastSuccessfulAt ? "OK" : "Pending"}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {ranges.map((r) => (
+                <button
+                  key={r}
+                  className={`button ${range === r ? "buttonPrimary" : ""}`}
+                  onClick={() => setRange(r)}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+
+            {world?.lastError ? (
+              <div className="muted" style={{ color: "var(--negative)" }}>
+                Last error: {world.lastError}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="cardHeader">
+            <h2>Players</h2>
+            <span className="muted" style={{ fontSize: 12 }}>
+              Range: {range}
+            </span>
+          </div>
+          <div className="cardBody">
+            {error ? (
+              <p style={{ color: "var(--negative)" }}>{error}</p>
+            ) : data == null ? (
+              <p className="muted">Loading…</p>
+            ) : data.length === 0 ? (
+              <p className="muted">No snapshots yet.</p>
+            ) : (
+              <CCULineChart data={data} />
+            )}
+          </div>
+        </div>
+
+        {data && data.length > 0 ? (
+          <div className="card">
+            <div className="cardHeader">
+              <h2>Recent samples</h2>
+              <span className="muted" style={{ fontSize: 12 }}>
+                Showing last 50 points
+              </span>
+            </div>
+            <div className="cardBody">
+              <div className="tableWrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th className="num">Players</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data
+                      .slice(-50)
+                      .slice()
+                      .reverse()
+                      .map((s: Snapshot) => (
+                        <tr key={s.capturedAt}>
+                          <td>{fmtTime(s.capturedAt)}</td>
+                          <td className="num">{fmtInt(s.ccu)}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

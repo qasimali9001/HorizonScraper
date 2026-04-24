@@ -25,6 +25,7 @@ export function extractCCUFromText(text: string): DomExtractResult {
     /\bhere\s*now\s*[:\-]?\s*([\d,.]+)\b/i,
   ];
 
+  let sawParseFailure = false;
   for (const re of patterns) {
     const match = text.match(re);
     if (!match) continue;
@@ -33,11 +34,15 @@ export function extractCCUFromText(text: string): DomExtractResult {
     const maybe = parseCompactNumber(
       match[2] ? `${raw}${match[2]}` : raw.replace(/[^\d.,km]/gi, "")
     );
-    if (maybe == null) return { ok: false, reason: "parse_failed" };
-    if (maybe < 0) return { ok: false, reason: "parse_failed" };
+    if (maybe == null || maybe < 0) {
+      // Some pages contain unrelated numbers that match a broad pattern.
+      // Keep scanning for more specific matches (e.g. "49 here now").
+      sawParseFailure = true;
+      continue;
+    }
     return { ok: true, ccu: maybe, rawMatch: match[0] };
   }
 
-  return { ok: false, reason: "no_match" };
+  return { ok: false, reason: sawParseFailure ? "parse_failed" : "no_match" };
 }
 

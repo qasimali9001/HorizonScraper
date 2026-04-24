@@ -16,6 +16,13 @@ type World = {
   latestCapturedAt: string | null;
 };
 
+type Snapshot = { ccu: number; capturedAt: string };
+type WorldStats24h = {
+  current: number | null;
+  peak24h: number | null;
+  change24hPct: number | null;
+};
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
 
@@ -26,11 +33,57 @@ function fmtTime(value: string | null) {
   return d.toLocaleString();
 }
 
+function fmtInt(v: number | null) {
+  if (v == null) return "—";
+  return new Intl.NumberFormat().format(v);
+}
+
+function fmtPct(v: number | null) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const sign = v > 0 ? "+" : "";
+  return `${sign}${v.toFixed(1)}%`;
+}
+
+function compute24hStats(snapshots: Snapshot[], fallbackCurrent: number | null): WorldStats24h {
+  if (snapshots.length === 0) {
+    return { current: fallbackCurrent, peak24h: null, change24hPct: null };
+  }
+  const values = snapshots.map((s) => s.ccu);
+  const peakFromSnapshots = values.reduce((m, v) => (v > m ? v : m), values[0] ?? 0);
+  const currentFromSnapshots = values[values.length - 1] ?? null;
+  const current = currentFromSnapshots ?? fallbackCurrent;
+  const peak24h =
+    current != null ? Math.max(peakFromSnapshots, current) : peakFromSnapshots;
+  const first = values[0] ?? null;
+  const change24hPct =
+    first == null || first === 0 || current == null ? null : ((current - first) / first) * 100;
+  return { current: current ?? fallbackCurrent, peak24h, change24hPct };
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let idx = 0;
+  const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
+    while (idx < items.length) {
+      const i = idx++;
+      out[i] = await fn(items[i]!);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 export function Dashboard() {
   const [worlds, setWorlds] = useState<World[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newUrl, setNewUrl] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [stats24h, setStats24h] = useState<Record<string, WorldStats24h>>({});
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const client = useMemo(
     () =>
@@ -44,11 +97,31 @@ export function Dashboard() {
     setError(null);
     const res = await client.get<World[]>("/worlds");
     setWorlds(res.data);
+    await refresh24hStats(res.data);
   }
 
   useEffect(() => {
     refresh().catch((e) => setError(e?.message ?? "Failed to load worlds"));
   }, []);
+
+  async function refresh24hStats(ws: World[]) {
+    setStatsLoading(true);
+    try {
+      const results = await mapWithConcurrency(ws, 4, async (w) => {
+        const res = await client.get<Snapshot[]>(`/worlds/${w.id}/ccu`, {
+          params: { range: "24h" },
+        });
+        return [w.id, compute24hStats(res.data, w.latestCCU)] as const;
+      });
+      const next: Record<string, WorldStats24h> = {};
+      for (const [id, s] of results) next[id] = s;
+      setStats24h(next);
+    } catch (e: any) {
+      setError(e?.response?.data?.message ?? e?.message ?? "Failed to load 24h stats");
+    } finally {
+      setStatsLoading(false);
+    }
+  }
 
   async function onAddWorld() {
     setIsAdding(true);
@@ -56,7 +129,9 @@ export function Dashboard() {
     try {
       await client.post("/worlds", { url: newUrl });
       setNewUrl("");
-      await refresh();
+      const res = await client.get<World[]>("/worlds");
+      setWorlds(res.data);
+      await refresh24hStats(res.data);
     } catch (e: any) {
       setError(e?.response?.data?.message ?? e?.message ?? "Failed to add world");
     } finally {
@@ -66,162 +141,117 @@ export function Dashboard() {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <section
-        style={{
-          border: "1px solid rgba(255,255,255,0.12)",
-          borderRadius: 12,
-          padding: 16,
-        }}
-      >
-        <h2 style={{ margin: 0, fontSize: 16 }}>Add world</h2>
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <input
-            value={newUrl}
-            onChange={(e) => setNewUrl(e.target.value)}
-            placeholder="https://horizon.meta.com/world/462305146410908/"
-            style={{
-              flex: 1,
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.16)",
-              background: "rgba(0,0,0,0.2)",
-              color: "inherit",
-            }}
-          />
-          <button
-            disabled={isAdding || !newUrl.trim()}
-            onClick={() => onAddWorld()}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.16)",
-              background: isAdding ? "rgba(255,255,255,0.12)" : "#2563eb",
-              color: "white",
-              cursor: isAdding ? "not-allowed" : "pointer",
-            }}
-          >
-            {isAdding ? "Adding..." : "Add"}
-          </button>
-        </div>
-        {error ? (
-          <p style={{ marginTop: 12, color: "#fca5a5" }}>{error}</p>
-        ) : null}
-      </section>
-
-      <section style={{ display: "grid", gap: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <h2 style={{ margin: 0, fontSize: 16 }}>Worlds</h2>
-          <button
-            onClick={() => refresh()}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.16)",
-              background: "rgba(255,255,255,0.06)",
-              color: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            Refresh
-          </button>
-        </div>
-
-        {worlds == null ? (
-          <p style={{ color: "rgba(255,255,255,0.7)" }}>Loading…</p>
-        ) : worlds.length === 0 ? (
-          <p style={{ color: "rgba(255,255,255,0.7)" }}>
-            No worlds yet. Add one above.
-          </p>
-        ) : (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-              gap: 12,
-            }}
-          >
-            {worlds.map((w) => (
-              <div
-                key={w.id}
-                style={{
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 12,
-                  padding: 14,
-                  background: "rgba(0,0,0,0.12)",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 12,
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, overflow: "hidden" }}>
-                      {w.name}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "rgba(255,255,255,0.6)",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                      title={w.url}
-                    >
-                      {w.url}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>
-                      Current CCU
-                    </div>
-                    <div style={{ fontSize: 20, fontWeight: 800 }}>
-                      {w.latestCCU ?? "—"}
-                    </div>
-                  </div>
-                </div>
-
-                {w.lastError ? (
-                  <div style={{ marginTop: 10, color: "#fca5a5", fontSize: 12 }}>
-                    Last error: {w.lastError}
-                  </div>
-                ) : w.lastSuccessfulAt ? (
-                  <div
-                    style={{ marginTop: 10, color: "rgba(255,255,255,0.6)", fontSize: 12 }}
-                  >
-                    Last success: {fmtTime(w.lastSuccessfulAt)}
-                  </div>
-                ) : (
-                  <div
-                    style={{ marginTop: 10, color: "rgba(255,255,255,0.6)", fontSize: 12 }}
-                  >
-                    Not scraped yet
-                  </div>
-                )}
-
-                {w.latestCapturedAt ? (
-                  <div
-                    style={{
-                      marginTop: 6,
-                      color: "rgba(255,255,255,0.6)",
-                      fontSize: 12,
-                    }}
-                  >
-                    Latest sample: {fmtTime(w.latestCapturedAt)}
-                  </div>
-                ) : null}
-
-                <div style={{ marginTop: 12 }}>
-                  <Link href={`/world/${w.id}`}>View graph →</Link>
-                </div>
-              </div>
-            ))}
+      <div className="card">
+        <div className="cardHeader">
+          <h2>Worlds (SteamCharts-style)</h2>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              className="button"
+              onClick={async () => {
+                const res = await client.get<World[]>("/worlds");
+                setWorlds(res.data);
+                await refresh24hStats(res.data);
+              }}
+              disabled={worlds == null || statsLoading}
+            >
+              {statsLoading ? "Refreshing…" : "Refresh"}
+            </button>
           </div>
-        )}
-      </section>
+        </div>
+
+        <div className="cardBody">
+          {error ? <p style={{ color: "var(--negative)" }}>{error}</p> : null}
+
+          {worlds == null ? (
+            <p className="muted">Loading…</p>
+          ) : worlds.length === 0 ? (
+            <p className="muted">No worlds yet.</p>
+          ) : (
+            <div className="tableWrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th style={{ width: "48%" }}>World</th>
+                    <th className="num">Current Players</th>
+                    <th className="num">24h Peak</th>
+                    <th className="num">24h Change</th>
+                    <th>Last Sample</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {worlds.map((w) => {
+                    const s = stats24h[w.id];
+                    const change = s?.change24hPct ?? null;
+                    const changeClass =
+                      change == null ? "" : change >= 0 ? "deltaPos" : "deltaNeg";
+
+                    return (
+                      <tr key={w.id}>
+                        <td style={{ maxWidth: 1 }}>
+                          <div style={{ display: "grid", gap: 4 }}>
+                            <Link href={`/world/${w.id}`} style={{ color: "var(--link)", fontWeight: 700 }}>
+                              {w.name}
+                            </Link>
+                            <div className="muted" style={{ overflow: "hidden", textOverflow: "ellipsis" }} title={w.url}>
+                              {w.url}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="num">{fmtInt(s?.current ?? w.latestCCU)}</td>
+                        <td className="num">{fmtInt(s?.peak24h ?? null)}</td>
+                        <td className={`num ${changeClass}`}>{fmtPct(change)}</td>
+                        <td>{fmtTime(w.latestCapturedAt) ?? "—"}</td>
+                        <td>
+                          {w.lastError ? (
+                            <span className="pill" style={{ color: "var(--negative)" }}>
+                              Error
+                            </span>
+                          ) : w.lastSuccessfulAt ? (
+                            <span className="pill">OK</span>
+                          ) : (
+                            <span className="pill muted">Pending</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="cardHeader">
+          <h2>Add world</h2>
+          <span className="muted" style={{ fontSize: 12 }}>
+            Admin helper
+          </span>
+        </div>
+        <div className="cardBody" style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              className="input"
+              value={newUrl}
+              onChange={(e) => setNewUrl(e.target.value)}
+              placeholder="https://horizon.meta.com/world/462305146410908/"
+            />
+            <button
+              className={`button buttonPrimary`}
+              disabled={isAdding || !newUrl.trim()}
+              onClick={() => onAddWorld()}
+              style={{ whiteSpace: "nowrap" }}
+            >
+              {isAdding ? "Adding…" : "Add"}
+            </button>
+          </div>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Tip: after you add worlds, use Refresh to fetch 24h stats.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
