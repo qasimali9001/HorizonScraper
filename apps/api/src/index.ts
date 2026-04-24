@@ -30,10 +30,43 @@ function assertJobSecret(req: express.Request, res: express.Response): boolean {
   return true;
 }
 
+let ccuCollectorRunning = false;
+let ccuCollectorLastStartedAt: Date | null = null;
+let ccuCollectorLastFinishedAt: Date | null = null;
+
 app.post("/jobs/ccuCollector/runOnce", async (req, res) => {
   if (!assertJobSecret(req, res)) return;
-  await runCCUCollectorOnce();
-  res.json({ ok: true });
+
+  if (ccuCollectorRunning) {
+    res.status(409).json({
+      ok: false,
+      message: "collector_already_running",
+      lastStartedAt: ccuCollectorLastStartedAt,
+    });
+    return;
+  }
+
+  // Return immediately to avoid gateway timeouts (Railway 502).
+  ccuCollectorRunning = true;
+  ccuCollectorLastStartedAt = new Date();
+  res.status(202).json({
+    ok: true,
+    accepted: true,
+    startedAt: ccuCollectorLastStartedAt,
+    lastFinishedAt: ccuCollectorLastFinishedAt,
+  });
+
+  void runCCUCollectorOnce()
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[ccu] runOnce failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    })
+    .finally(() => {
+      ccuCollectorLastFinishedAt = new Date();
+      ccuCollectorRunning = false;
+    });
 });
 
 app.post("/jobs/worldNames/refreshAll", async (req, res) => {
