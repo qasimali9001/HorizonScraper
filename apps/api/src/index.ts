@@ -94,12 +94,13 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 const port = Number(process.env.PORT ?? 3001);
 
 void (async () => {
-  await ensurePlaywrightChromiumInstalled();
-
   app.listen(port, () => {
     // eslint-disable-next-line no-console
     console.log(`API listening on http://localhost:${port}`);
   });
+
+  // Do not block server startup on Playwright setup (Railway will 502 if we don't respond).
+  void ensurePlaywrightChromiumInstalled();
 
   const seedWorlds = (process.env.SEED_WORLDS ?? "false").toLowerCase() === "true";
   if (seedWorlds) {
