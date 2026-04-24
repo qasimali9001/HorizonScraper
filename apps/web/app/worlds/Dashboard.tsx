@@ -176,7 +176,6 @@ export function Dashboard() {
   const [sparks24h, setSparks24h] = useState<Record<string, number[]>>({});
   const [statsLoading, setStatsLoading] = useState(false);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "ok" | "error" | "pending">("all");
   const [sortBy, setSortBy] = useState<
     "name" | "current" | "peak24h" | "change24h" | "trend" | "status"
   >("current");
@@ -240,15 +239,14 @@ export function Dashboard() {
         const spark = sparks24h[w.id] ?? [];
         return { w, current, peak24h, change24hPct, status, spark };
       })
-      .filter(({ w, status }) => {
+      .filter(({ w }) => {
         if (
           q &&
           !w.name.toLowerCase().includes(q) &&
           !w.url.toLowerCase().includes(q)
         )
           return false;
-        if (statusFilter === "all") return true;
-        return status === statusFilter;
+        return true;
       });
 
     const dir = sortDir === "asc" ? 1 : -1;
@@ -275,7 +273,7 @@ export function Dashboard() {
     });
 
     return base;
-  }, [worlds, stats24h, sparks24h, query, statusFilter, sortBy, sortDir]);
+  }, [worlds, stats24h, sparks24h, query, sortBy, sortDir]);
 
   async function refresh24hStats(ws: World[]) {
     setStatsLoading(true);
@@ -398,43 +396,23 @@ export function Dashboard() {
       <div className="card">
         <div className="cardHeader">
           <h2>Worlds</h2>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div className="controlsRow" style={{ flex: 1, justifyContent: "flex-end" }}>
             <input
-              className="input"
+              className="input controlLg"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search worlds…"
-              style={{ width: 220 }}
             />
           </div>
         </div>
 
         <div className="cardBody">
           {error ? <p style={{ color: "var(--negative)" }}>{error}</p> : null}
-
-          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
-            <span className="muted" style={{ fontSize: 12 }}>
-              Status:
-            </span>
-            <select
-              className="input"
-              value={statusFilter}
-              onChange={(e) =>
-                setStatusFilter(e.target.value as "all" | "ok" | "error" | "pending")
-              }
-              style={{ width: 160 }}
-            >
-              <option value="all">All</option>
-              <option value="ok">OK</option>
-              <option value="pending">Pending</option>
-              <option value="error">Error</option>
-            </select>
-            {statsLoading ? (
-              <span className="muted" style={{ fontSize: 12 }}>
-                Loading 24h stats…
-              </span>
-            ) : null}
-          </div>
+          {statsLoading ? (
+            <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
+              Loading 24h stats…
+            </div>
+          ) : null}
 
           {worlds == null ? (
             <p className="muted">Loading…</p>

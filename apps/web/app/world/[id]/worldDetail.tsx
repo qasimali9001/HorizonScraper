@@ -124,7 +124,7 @@ export function WorldDetail({ worldId }: { worldId: string }) {
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div className="controlsRow">
               {ranges.map((r) => (
                 <button
                   key={r}
