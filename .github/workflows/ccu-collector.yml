@@ -10,6 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Health probe
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          echo "Probing ${API_BASE_URL}/health"
+          curl -i "${API_BASE_URL}/health" || true
+
       - name: Call collector endpoint
         env:
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
