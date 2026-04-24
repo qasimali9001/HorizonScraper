@@ -346,6 +346,18 @@ export function Dashboard() {
     }
   }
 
+  async function requireJobSecret(): Promise<string> {
+    let secret = jobSecret || loadJobSecret();
+    if (!secret) {
+      secret = globalThis.prompt("Enter JOB_SECRET:") ?? "";
+    }
+    secret = secret.trim();
+    if (!secret) throw new Error("missing_job_secret");
+    setJobSecret(secret);
+    saveJobSecret(secret);
+    return secret;
+  }
+
   async function waitForCollectorToFinish(startedAt: number): Promise<void> {
     // Poll until lastFinishedAt is after startedAt (or running flips false).
     const maxMs = 3 * 60 * 1000;
@@ -366,28 +378,76 @@ export function Dashboard() {
     setIsUpdatingCCU(true);
     setError(null);
     try {
-      let secret = jobSecret || loadJobSecret();
-      if (!secret) {
-        secret = globalThis.prompt("Enter JOB_SECRET to run the collector:") ?? "";
-      }
-      secret = secret.trim();
-      if (!secret) throw new Error("missing_job_secret");
-      setJobSecret(secret);
-      saveJobSecret(secret);
-
-      const startedAt = Date.now();
-      await client.post(
-        "/jobs/ccuCollector/runOnce",
-        {},
-        { headers: { "x-job-secret": secret, "content-type": "application/json" } }
+      const ok = globalThis.confirm(
+        "Update CCUs will scrape each world and can take a while (throttled to avoid Meta rate limits).\n\nPlease don't spam this button or run it at the same time as the GitHub scheduler.\n\nContinue?"
       );
+      if (!ok) return;
+
+      const secret = await requireJobSecret();
+
+      // If a run is already happening (e.g. GitHub schedule), wait rather than starting another.
+      const statusRes = await client.get<CollectorStatus>("/jobs/ccuCollector/status", {
+        headers: { "x-job-secret": secret },
+      });
+
+      const startedAt = statusRes.data.running
+        ? Date.parse(statusRes.data.lastStartedAt ?? "") || Date.now()
+        : Date.now();
+
+      if (!statusRes.data.running) {
+        await client.post(
+          "/jobs/ccuCollector/runOnce",
+          {},
+          { headers: { "x-job-secret": secret, "content-type": "application/json" } }
+        );
+      }
 
       await waitForCollectorToFinish(startedAt);
       await refresh();
     } catch (e: any) {
+      // If the collector is running or completed but our polling timed out/network hiccuped,
+      // refresh the table anyway and avoid showing a scary error when data updated.
+      try {
+        await refresh();
+        setError(null);
+        return;
+      } catch {
+        // ignore and fall through to show error
+      }
+
       setError(e?.response?.data?.message ?? e?.message ?? "Failed to update CCUs");
     } finally {
       setIsUpdatingCCU(false);
+    }
+  }
+
+  async function onRefreshWorld(worldId: string) {
+    setError(null);
+    try {
+      const ok = globalThis.confirm(
+        "This will scrape CCU for ONE world now.\n\nPlease don't mass-refresh lots of worlds quickly (Meta can rate limit/temporarily block).\n\nContinue?"
+      );
+      if (!ok) return;
+
+      const secret = await requireJobSecret();
+      await client.post(
+        `/worlds/${worldId}/collectNow`,
+        {},
+        { headers: { "x-job-secret": secret, "content-type": "application/json" } }
+      );
+      await refresh();
+    } catch (e: any) {
+      // If the scrape likely ran but the request errored, refresh anyway and suppress the error
+      // when the table loads successfully.
+      try {
+        await refresh();
+        setError(null);
+        return;
+      } catch {
+        // ignore and fall through
+      }
+
+      setError(e?.response?.data?.message ?? e?.message ?? "Failed to refresh world CCU");
     }
   }
 
@@ -511,6 +571,14 @@ export function Dashboard() {
                           )}
 
                           <span style={{ marginLeft: 10, display: "inline-flex", gap: 8 }}>
+                            <button
+                              className="button"
+                              onClick={() => onRefreshWorld(w.id)}
+                              style={{ padding: "8px 10px" }}
+                              title="Scrape CCU for this world now"
+                            >
+                              Refresh
+                            </button>
                             {w.isActive === false ? (
                               <button
                                 className="button"

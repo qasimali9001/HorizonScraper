@@ -1,13 +1,20 @@
 import { prisma } from "@horizon-scraper/db";
 import { getCCU } from "../scraper/horizon.js";
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function runCCUCollectorOnce(): Promise<void> {
   const worlds = await prisma.world.findMany({
     where: { isActive: true },
     orderBy: { createdAt: "asc" },
   });
 
-  for (const world of worlds) {
+  const delayMs = Math.max(0, Number(process.env.COLLECTOR_WORLD_DELAY_MS ?? 15_000));
+
+  for (let i = 0; i < worlds.length; i++) {
+    const world = worlds[i]!;
     const startedAt = Date.now();
     try {
       const result = await Promise.race([
@@ -58,6 +65,13 @@ export async function runCCUCollectorOnce(): Promise<void> {
       console.error(
         `[ccu] world=${world.id} name="${world.name}" error="${msg}" elapsedMs=${Date.now() - startedAt}`
       );
+    } finally {
+      // Throttle between worlds to reduce rate limiting / temporary blocks.
+      if (i < worlds.length - 1 && delayMs > 0) {
+        // eslint-disable-next-line no-console
+        console.log(`[ccu] sleeping ${delayMs}ms before next world`);
+        await sleep(delayMs);
+      }
     }
   }
 }

@@ -85,6 +85,57 @@ router.post("/:id/setActive", async (req, res) => {
   res.json(updated);
 });
 
+function assertJobSecret(req: any, res: any): boolean {
+  const expected = process.env.JOB_SECRET;
+  if (!expected) return true;
+  const provided = req.header("x-job-secret");
+  if (!provided || provided !== expected) {
+    res.status(401).json({ message: "unauthorized" });
+    return false;
+  }
+  return true;
+}
+
+router.post("/:id/collectNow", async (req, res) => {
+  if (!assertJobSecret(req, res)) return;
+  const id = String(req.params.id);
+  const world = await prisma.world.findUnique({ where: { id } });
+  if (!world) {
+    res.status(404).json({ message: "world_not_found" });
+    return;
+  }
+
+  const startedAt = Date.now();
+  const result = await Promise.race([
+    getCCU(world.url),
+    new Promise<ReturnType<typeof getCCU>>((_, reject) =>
+      setTimeout(() => reject(new Error("scrape_timeout")), 40_000)
+    ),
+  ]).catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ccu: null, method: "dom" as const, debug: { error: msg } };
+  });
+
+  if (result.ccu == null) {
+    await prisma.world.update({
+      where: { id },
+      data: { lastError: `ccu_null (${result.method})` },
+    });
+    res.status(409).json({ message: "ccu_null", debug: result.debug, elapsedMs: Date.now() - startedAt });
+    return;
+  }
+
+  const snap = await prisma.cCUSnapshot.create({
+    data: { worldId: id, ccu: result.ccu },
+  });
+  await prisma.world.update({
+    where: { id },
+    data: { lastSuccessfulAt: new Date(), lastError: null },
+  });
+
+  res.json({ ok: true, ccu: result.ccu, capturedAt: snap.capturedAt, method: result.method });
+});
+
 function rangeToSince(range: string | undefined): Date | null {
   const now = Date.now();
   switch ((range ?? "24h").toLowerCase()) {
