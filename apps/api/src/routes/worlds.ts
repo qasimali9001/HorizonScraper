@@ -34,6 +34,72 @@ router.get("/", async (_req, res) => {
   );
 });
 
+router.get("/summary", async (_req, res) => {
+  const worlds = await prisma.world.findMany({
+    orderBy: { createdAt: "asc" },
+    include: {
+      snapshots: {
+        orderBy: { capturedAt: "desc" },
+        take: 1,
+      },
+    },
+  });
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const ids = worlds.map((w) => w.id);
+
+  const snaps = await prisma.cCUSnapshot.findMany({
+    where: { worldId: { in: ids }, capturedAt: { gte: since } },
+    orderBy: [{ worldId: "asc" }, { capturedAt: "asc" }],
+  });
+
+  const byWorld: Record<string, CCUSnapshot[]> = {};
+  for (const s of snaps) {
+    (byWorld[s.worldId] ??= []).push(s);
+  }
+
+  function downsample(values: number[], maxPoints: number): number[] {
+    if (values.length <= maxPoints) return values;
+    const out: number[] = [];
+    for (let i = 0; i < maxPoints; i++) {
+      const idx = Math.floor((i * (values.length - 1)) / (maxPoints - 1));
+      out.push(values[idx]!);
+    }
+    return out;
+  }
+
+  const payload = worlds.map((w: World & { snapshots: CCUSnapshot[] }) => {
+    const series = byWorld[w.id] ?? [];
+    const values = series.map((s) => s.ccu);
+    const peak24h = values.length ? Math.max(...values) : null;
+    const current24h = values.length ? values[values.length - 1]! : null;
+    const first = values.length ? values[0]! : null;
+    const change24hPct =
+      first == null || first === 0 || current24h == null ? null : ((current24h - first) / first) * 100;
+    const spark = downsample(values, 28);
+
+    return {
+      id: w.id,
+      name: w.name,
+      url: w.url,
+      isActive: w.isActive,
+      createdAt: w.createdAt,
+      lastSuccessfulAt: w.lastSuccessfulAt,
+      lastError: w.lastError,
+      latestCCU: w.snapshots[0]?.ccu ?? null,
+      latestCapturedAt: w.snapshots[0]?.capturedAt ?? null,
+      stats24h: {
+        current: current24h ?? (w.snapshots[0]?.ccu ?? null),
+        peak24h,
+        change24hPct,
+      },
+      spark24h: spark,
+    };
+  });
+
+  res.json(payload);
+});
+
 router.post("/", async (req, res) => {
   const rawUrl = String(req.body?.url ?? "");
   const url = normalizeWorldUrl(rawUrl);

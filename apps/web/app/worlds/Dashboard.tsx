@@ -23,6 +23,8 @@ type WorldStats24h = {
   change24hPct: number | null;
 };
 
+type WorldSummaryRow = World & { stats24h: WorldStats24h; spark24h: number[] };
+
 type CollectorStatus = {
   ok: true;
   running: boolean;
@@ -174,7 +176,6 @@ export function Dashboard() {
   const [isAdding, setIsAdding] = useState(false);
   const [stats24h, setStats24h] = useState<Record<string, WorldStats24h>>({});
   const [sparks24h, setSparks24h] = useState<Record<string, number[]>>({});
-  const [statsLoading, setStatsLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<
     "name" | "current" | "peak24h" | "change24h" | "trend" | "status"
@@ -211,9 +212,17 @@ export function Dashboard() {
 
   async function refresh() {
     setError(null);
-    const res = await client.get<World[]>("/worlds");
-    setWorlds(res.data);
-    await refresh24hStats(res.data);
+    const res = await client.get<WorldSummaryRow[]>("/worlds/summary");
+    const ws = res.data.map(({ stats24h, spark24h, ...w }) => w);
+    setWorlds(ws);
+    const nextStats: Record<string, WorldStats24h> = {};
+    const nextSparks: Record<string, number[]> = {};
+    for (const row of res.data) {
+      nextStats[row.id] = row.stats24h;
+      nextSparks[row.id] = row.spark24h;
+    }
+    setStats24h(nextStats);
+    setSparks24h(nextSparks);
   }
 
   useEffect(() => {
@@ -275,36 +284,7 @@ export function Dashboard() {
     return base;
   }, [worlds, stats24h, sparks24h, query, sortBy, sortDir]);
 
-  async function refresh24hStats(ws: World[]) {
-    setStatsLoading(true);
-    try {
-      const results = await mapWithConcurrency(ws, 4, async (w) => {
-        const res = await client.get<Snapshot[]>(`/worlds/${w.id}/ccu`, {
-          params: { range: "24h", includePrev: "1" },
-        });
-        const now = Date.now();
-        const since = now - 24 * 60 * 60 * 1000;
-        const within = res.data
-          .map((s) => ({ ts: Date.parse(s.capturedAt), ccu: s.ccu }))
-          .filter((s) => Number.isFinite(s.ts) && s.ts >= since)
-          .map((s) => s.ccu);
-        const spark = downsample(within, 28);
-        return [w.id, compute24hStats(res.data, w.latestCCU), spark] as const;
-      });
-      const next: Record<string, WorldStats24h> = {};
-      const sparks: Record<string, number[]> = {};
-      for (const [id, s, spark] of results) {
-        next[id] = s;
-        sparks[id] = spark;
-      }
-      setStats24h(next);
-      setSparks24h(sparks);
-    } catch (e: any) {
-      setError(e?.response?.data?.message ?? e?.message ?? "Failed to load 24h stats");
-    } finally {
-      setStatsLoading(false);
-    }
-  }
+  // 24h stats and sparklines are now loaded in a single call via /worlds/summary.
 
   async function onAddWorld() {
     setIsAdding(true);
@@ -312,9 +292,7 @@ export function Dashboard() {
     try {
       await client.post("/worlds", { url: newUrl });
       setNewUrl("");
-      const res = await client.get<World[]>("/worlds");
-      setWorlds(res.data);
-      await refresh24hStats(res.data);
+      await refresh();
     } catch (e: any) {
       setError(e?.response?.data?.message ?? e?.message ?? "Failed to add world");
     } finally {
@@ -468,11 +446,7 @@ export function Dashboard() {
 
         <div className="cardBody">
           {error ? <p style={{ color: "var(--negative)" }}>{error}</p> : null}
-          {statsLoading ? (
-            <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
-              Loading 24h stats…
-            </div>
-          ) : null}
+          {/* 24h stats now load together with worlds via /worlds/summary */}
 
           {worlds == null ? (
             <p className="muted">Loading…</p>
@@ -642,7 +616,7 @@ export function Dashboard() {
         <button
           className="button buttonPrimary"
           onClick={() => onUpdateCCUs()}
-          disabled={isUpdatingCCU || statsLoading}
+          disabled={isUpdatingCCU}
           style={{ padding: "10px 14px" }}
         >
           {isUpdatingCCU ? "Updating CCUs…" : "Update CCUs"}
