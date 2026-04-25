@@ -361,14 +361,23 @@ export function Dashboard() {
                           <Sparkline values={spark} />
                         </td>
                         <td>
-                          {w.lastError ? (
-                            <span className="pill" style={{ color: "var(--negative)" }}>
+                          {w.isActive === false ? (
+                            <span className="pill muted">Not tracked</span>
+                          ) : w.lastError && !w.lastSuccessfulAt ? (
+                            <span
+                              className="pill"
+                              style={{ color: "var(--negative)" }}
+                              title={w.lastError}
+                            >
                               Error
                             </span>
-                          ) : w.isActive === false ? (
-                            <span className="pill muted">Not tracked</span>
                           ) : w.lastSuccessfulAt ? (
-                            <span className="pill">OK</span>
+                            <span
+                              className="pill"
+                              title={w.lastError ? `Last error: ${w.lastError}` : undefined}
+                            >
+                              OK{w.lastError ? " (recovered)" : ""}
+                            </span>
                           ) : (
                             <span className="pill muted">Pending</span>
                           )}
