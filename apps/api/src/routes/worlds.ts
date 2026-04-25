@@ -25,6 +25,7 @@ router.get("/", async (_req, res) => {
       name: w.name,
       url: w.url,
       isActive: w.isActive,
+      isFavorite: w.isFavorite,
       createdAt: w.createdAt,
       lastSuccessfulAt: w.lastSuccessfulAt,
       lastError: w.lastError,
@@ -83,6 +84,7 @@ router.get("/summary", async (_req, res) => {
       name: w.name,
       url: w.url,
       isActive: w.isActive,
+      isFavorite: w.isFavorite,
       createdAt: w.createdAt,
       lastSuccessfulAt: w.lastSuccessfulAt,
       lastError: w.lastError,
@@ -98,6 +100,18 @@ router.get("/summary", async (_req, res) => {
   });
 
   res.json(payload);
+});
+
+router.post("/:id/favorite", async (req, res) => {
+  const id = String(req.params.id);
+  const desired =
+    typeof req.body?.isFavorite === "boolean" ? req.body.isFavorite : undefined;
+
+  const updated = await prisma.world.update({
+    where: { id },
+    data: { isFavorite: desired ?? undefined },
+  });
+  res.json({ ok: true, isFavorite: updated.isFavorite });
 });
 
 router.post("/", async (req, res) => {

@@ -9,6 +9,7 @@ type World = {
   name: string;
   url: string;
   isActive: boolean;
+  isFavorite: boolean;
   createdAt: string;
   lastSuccessfulAt: string | null;
   lastError: string | null;
@@ -183,6 +184,8 @@ export function Dashboard() {
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
   const [isUpdatingCCU, setIsUpdatingCCU] = useState(false);
   const [jobSecret, setJobSecret] = useState<string>("");
+  const [favorites, setFavorites] = useState<WorldSummaryRow[]>([]);
+  const [nonFavorites, setNonFavorites] = useState<WorldSummaryRow[]>([]);
 
   function toggleSort(col: "name" | "current" | "peak24h" | "change24h" | "trend" | "status") {
     if (sortBy === col) {
@@ -213,16 +216,201 @@ export function Dashboard() {
   async function refresh() {
     setError(null);
     const res = await client.get<WorldSummaryRow[]>("/worlds/summary");
-    const ws = res.data.map(({ stats24h, spark24h, ...w }) => w);
+    const data = res.data;
+    setFavorites(data.filter((w) => w.isFavorite));
+    setNonFavorites(data.filter((w) => !w.isFavorite));
+
+    const ws = data.map(({ stats24h, spark24h, ...w }) => w);
     setWorlds(ws);
     const nextStats: Record<string, WorldStats24h> = {};
     const nextSparks: Record<string, number[]> = {};
-    for (const row of res.data) {
+    for (const row of data) {
       nextStats[row.id] = row.stats24h;
       nextSparks[row.id] = row.spark24h;
     }
     setStats24h(nextStats);
     setSparks24h(nextSparks);
+  }
+  async function toggleFavorite(worldId: string, next: boolean) {
+    setError(null);
+    try {
+      await client.post(`/worlds/${worldId}/favorite`, { isFavorite: next });
+      await refresh();
+    } catch (e: any) {
+      setError(e?.response?.data?.message ?? e?.message ?? "Failed to update favorite");
+    }
+  }
+
+  function renderTable(title: string, rowsToRender: typeof rows) {
+    return (
+      <div className="card">
+        <div className="cardHeader">
+          <h2>{title}</h2>
+          <div className="controlsRow" style={{ flex: 1, justifyContent: "flex-end" }}>
+            <input
+              className="input controlLg"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search worlds…"
+            />
+          </div>
+        </div>
+        <div className="cardBody">
+          {error ? <p style={{ color: "var(--negative)" }}>{error}</p> : null}
+          {worlds == null ? (
+            <p className="muted">Loading…</p>
+          ) : rowsToRender.length === 0 ? (
+            <p className="muted">No worlds.</p>
+          ) : (
+            <div className="tableWrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th style={{ width: 34 }} title="Favorite">
+                      ★
+                    </th>
+                    <SortableTH
+                      label="World"
+                      col="name"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                      style={{ width: "48%" }}
+                    />
+                    <SortableTH
+                      label="Current Players"
+                      col="current"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                      className="num"
+                    />
+                    <SortableTH
+                      label="24h Peak"
+                      col="peak24h"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                      className="num hideMobile"
+                    />
+                    <SortableTH
+                      label="24h Change"
+                      col="change24h"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                      className="num hideMobile"
+                    />
+                    <SortableTH
+                      label="24h"
+                      col="trend"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                      sortable={false}
+                      className="hideMobile"
+                    />
+                    <SortableTH
+                      label="Status"
+                      col="status"
+                      active={sortBy}
+                      dir={sortDir}
+                      onToggle={(c) => toggleSort(c)}
+                    />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rowsToRender.map(({ w, current, peak24h, change24hPct, spark }) => {
+                    const change = change24hPct ?? null;
+                    const changeClass =
+                      change == null ? "" : change >= 0 ? "deltaPos" : "deltaNeg";
+
+                    return (
+                      <tr key={w.id}>
+                        <td>
+                          <button
+                            className="button"
+                            style={{
+                              padding: "6px 8px",
+                              background: "transparent",
+                            }}
+                            onClick={() => toggleFavorite(w.id, !w.isFavorite)}
+                            title={w.isFavorite ? "Unfavorite" : "Favorite"}
+                          >
+                            {w.isFavorite ? "★" : "☆"}
+                          </button>
+                        </td>
+                        <td style={{ maxWidth: 1 }}>
+                          <div style={{ display: "grid", gap: 4 }}>
+                            <Link href={`/world/${w.id}`} style={{ color: "var(--link)", fontWeight: 700 }}>
+                              <span className="worldTitle">{w.name}</span>
+                            </Link>
+                            <div
+                              className="muted"
+                              style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+                              title={w.url}
+                            >
+                              {w.url}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="num">{fmtInt(current ?? null)}</td>
+                        <td className="num hideMobile">{fmtInt(peak24h ?? null)}</td>
+                        <td className={`num ${changeClass} hideMobile`}>{fmtPct(change)}</td>
+                        <td className="hideMobile">
+                          <Sparkline values={spark} />
+                        </td>
+                        <td>
+                          {w.lastError ? (
+                            <span className="pill" style={{ color: "var(--negative)" }}>
+                              Error
+                            </span>
+                          ) : w.isActive === false ? (
+                            <span className="pill muted">Not tracked</span>
+                          ) : w.lastSuccessfulAt ? (
+                            <span className="pill">OK</span>
+                          ) : (
+                            <span className="pill muted">Pending</span>
+                          )}
+
+                          <span style={{ marginLeft: 10, display: "inline-flex", gap: 8 }}>
+                            <button
+                              className="button"
+                              onClick={() => onRefreshWorld(w.id)}
+                              style={{ padding: "8px 10px" }}
+                              title="Scrape CCU for this world now"
+                            >
+                              Refresh
+                            </button>
+                            {w.isActive === false ? (
+                              <button
+                                className="button"
+                                onClick={() => setTracking(w.id, true)}
+                                style={{ padding: "8px 10px" }}
+                              >
+                                Resume
+                              </button>
+                            ) : (
+                              <button
+                                className="button"
+                                onClick={() => setTracking(w.id, false)}
+                                style={{ padding: "8px 10px" }}
+                              >
+                                Stop
+                              </button>
+                            )}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    );
   }
 
   useEffect(() => {
@@ -431,156 +619,8 @@ export function Dashboard() {
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <div className="card">
-        <div className="cardHeader">
-          <h2>Worlds</h2>
-          <div className="controlsRow" style={{ flex: 1, justifyContent: "flex-end" }}>
-            <input
-              className="input controlLg"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search worlds…"
-            />
-          </div>
-        </div>
-
-        <div className="cardBody">
-          {error ? <p style={{ color: "var(--negative)" }}>{error}</p> : null}
-          {/* 24h stats now load together with worlds via /worlds/summary */}
-
-          {worlds == null ? (
-            <p className="muted">Loading…</p>
-          ) : rows.length === 0 ? (
-            <p className="muted">No worlds match your filters.</p>
-          ) : (
-            <div className="tableWrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <SortableTH
-                      label="World"
-                      col="name"
-                      active={sortBy}
-                      dir={sortDir}
-                      onToggle={(c) => toggleSort(c)}
-                      style={{ width: "48%" }}
-                    />
-                    <SortableTH
-                      label="Current Players"
-                      col="current"
-                      active={sortBy}
-                      dir={sortDir}
-                      onToggle={(c) => toggleSort(c)}
-                      className="num"
-                    />
-                    <SortableTH
-                      label="24h Peak"
-                      col="peak24h"
-                      active={sortBy}
-                      dir={sortDir}
-                      onToggle={(c) => toggleSort(c)}
-                      className="num hideMobile"
-                    />
-                    <SortableTH
-                      label="24h Change"
-                      col="change24h"
-                      active={sortBy}
-                      dir={sortDir}
-                      onToggle={(c) => toggleSort(c)}
-                      className="num hideMobile"
-                    />
-                    <SortableTH
-                      label="24h"
-                      col="trend"
-                      active={sortBy}
-                      dir={sortDir}
-                      onToggle={(c) => toggleSort(c)}
-                      sortable={false}
-                      className="hideMobile"
-                    />
-                    <SortableTH
-                      label="Status"
-                      col="status"
-                      active={sortBy}
-                      dir={sortDir}
-                      onToggle={(c) => toggleSort(c)}
-                    />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(({ w, current, peak24h, change24hPct, spark }) => {
-                    const change = change24hPct ?? null;
-                    const changeClass =
-                      change == null ? "" : change >= 0 ? "deltaPos" : "deltaNeg";
-
-                    return (
-                      <tr key={w.id}>
-                        <td style={{ maxWidth: 1 }}>
-                          <div style={{ display: "grid", gap: 4 }}>
-                            <Link href={`/world/${w.id}`} style={{ color: "var(--link)", fontWeight: 700 }}>
-                              <span className="worldTitle">{w.name}</span>
-                            </Link>
-                            <div className="muted" style={{ overflow: "hidden", textOverflow: "ellipsis" }} title={w.url}>
-                              {w.url}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="num">{fmtInt(current ?? null)}</td>
-                        <td className="num hideMobile">{fmtInt(peak24h ?? null)}</td>
-                        <td className={`num ${changeClass} hideMobile`}>{fmtPct(change)}</td>
-                        <td className="hideMobile">
-                          <Sparkline values={spark} />
-                        </td>
-                        <td>
-                          {w.lastError ? (
-                            <span className="pill" style={{ color: "var(--negative)" }}>
-                              Error
-                            </span>
-                          ) : w.isActive === false ? (
-                            <span className="pill muted">Not tracked</span>
-                          ) : w.lastSuccessfulAt ? (
-                            <span className="pill">OK</span>
-                          ) : (
-                            <span className="pill muted">Pending</span>
-                          )}
-
-                          <span style={{ marginLeft: 10, display: "inline-flex", gap: 8 }}>
-                            <button
-                              className="button"
-                              onClick={() => onRefreshWorld(w.id)}
-                              style={{ padding: "8px 10px" }}
-                              title="Scrape CCU for this world now"
-                            >
-                              Refresh
-                            </button>
-                            {w.isActive === false ? (
-                              <button
-                                className="button"
-                                onClick={() => setTracking(w.id, true)}
-                                style={{ padding: "8px 10px" }}
-                              >
-                                Resume
-                              </button>
-                            ) : (
-                              <button
-                                className="button"
-                                onClick={() => setTracking(w.id, false)}
-                                style={{ padding: "8px 10px" }}
-                              >
-                                Stop
-                              </button>
-                            )}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
+      {renderTable("Favorites", rows.filter(({ w }) => w.isFavorite))}
+      {renderTable("All worlds", rows.filter(({ w }) => !w.isFavorite))}
 
       <div className="card">
         <div className="cardHeader">

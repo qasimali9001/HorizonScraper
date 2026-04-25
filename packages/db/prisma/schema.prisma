@@ -13,10 +13,13 @@ model World {
   url              String        @unique
   createdAt        DateTime      @default(now())
   isActive         Boolean       @default(true)
+  isFavorite       Boolean       @default(false)
   lastSuccessfulAt DateTime?
   lastError        String?
 
   snapshots        CCUSnapshot[]
+
+  @@index([isFavorite, createdAt])
 }
 
 model CCUSnapshot {
