@@ -6,10 +6,11 @@ export default function Home() {
       <header className="topbar">
         <div className="brand">
           <h1>Horizon Charts</h1>
-          <p>Concurrent users per world, SteamCharts-style.</p>
+          <p>Concurrent users per world.</p>
         </div>
         <nav className="nav">
-          <a href="/worlds">Worlds</a>
+          <a href="/">Worlds</a>
+          <a href="/totals">Totals</a>
         </nav>
       </header>
 

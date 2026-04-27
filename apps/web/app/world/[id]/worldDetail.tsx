@@ -96,7 +96,8 @@ export function WorldDetail({ worldId }: { worldId: string }) {
           </p>
         </div>
         <nav className="nav">
-          <Link href="/worlds">← Back</Link>
+          <Link href="/">← Back</Link>
+          <Link href="/totals">Totals</Link>
         </nav>
       </header>
 

@@ -8,6 +8,20 @@ import type { World, CCUSnapshot } from "@prisma/client";
 
 const router = Router();
 
+function floorToBucket(ts: number, bucketMs: number): number {
+  return Math.floor(ts / bucketMs) * bucketMs;
+}
+
+function pickBucketMs(spanMs: number): number {
+  const hour = 60 * 60 * 1000;
+  const day = 24 * hour;
+  const spanDays = spanMs / day;
+  if (spanDays <= 3) return 30 * 60 * 1000; // 30m
+  if (spanDays <= 14) return 2 * hour; // 2h
+  if (spanDays <= 60) return 6 * hour; // 6h
+  return day; // 1d
+}
+
 router.get("/", async (_req, res) => {
   const worlds = await prisma.world.findMany({
     orderBy: { createdAt: "asc" },
@@ -100,6 +114,173 @@ router.get("/summary", async (_req, res) => {
   });
 
   res.json(payload);
+});
+
+router.get("/totals", async (req, res) => {
+  const range =
+    typeof req.query.range === "string" ? req.query.range : undefined;
+  const since = rangeToSince(range);
+
+  const worlds = await prisma.world.findMany({
+    orderBy: { createdAt: "asc" },
+    include: {
+      snapshots: {
+        orderBy: { capturedAt: "desc" },
+        take: 1,
+      },
+    },
+  });
+
+  const ids = worlds.map((w) => w.id);
+
+  const now = Date.now();
+  const minMax = await prisma.cCUSnapshot.aggregate({
+    where: {
+      ...(ids.length ? { worldId: { in: ids } } : {}),
+      ...(since ? { capturedAt: { gte: since } } : {}),
+    },
+    _min: { capturedAt: true },
+    _max: { capturedAt: true },
+  });
+
+  const minCapturedAt = minMax._min.capturedAt ?? null;
+  const maxCapturedAt = minMax._max.capturedAt ?? null;
+
+  const effectiveSince =
+    since ?? (minCapturedAt ? new Date(minCapturedAt) : new Date(now - 24 * 60 * 60 * 1000));
+  const effectiveUntil = maxCapturedAt ? new Date(maxCapturedAt) : new Date();
+
+  const spanMs = Math.max(0, effectiveUntil.getTime() - effectiveSince.getTime());
+  const bucketMs = pickBucketMs(spanMs);
+
+  const snaps = await prisma.cCUSnapshot.findMany({
+    where: {
+      ...(ids.length ? { worldId: { in: ids } } : {}),
+      capturedAt: { gte: effectiveSince },
+    },
+    orderBy: [{ worldId: "asc" }, { capturedAt: "asc" }],
+  });
+
+  let carry: Array<{ worldId: string; ccu: number; capturedAt: Date }> = [];
+  if (ids.length) {
+    carry = (await prisma.$queryRaw<
+      Array<{ worldId: string; ccu: number; capturedAt: Date }>
+    >`
+      select distinct on ("worldId")
+        "worldId",
+        "ccu",
+        "capturedAt"
+      from "CCUSnapshot"
+      where "worldId" = any(${ids}::text[])
+        and "capturedAt" < ${effectiveSince}
+      order by "worldId", "capturedAt" desc
+    `) as any;
+  }
+
+  const byWorld: Record<string, Array<{ ts: number; ccu: number }>> = {};
+  for (const c of carry) {
+    (byWorld[c.worldId] ??= []).push({
+      ts: new Date(c.capturedAt).getTime(),
+      ccu: c.ccu,
+    });
+  }
+  for (const s of snaps) {
+    (byWorld[s.worldId] ??= []).push({
+      ts: new Date(s.capturedAt).getTime(),
+      ccu: s.ccu,
+    });
+  }
+  for (const k of Object.keys(byWorld)) {
+    byWorld[k]!.sort((a, b) => a.ts - b.ts);
+  }
+
+  const startTs = floorToBucket(effectiveSince.getTime(), bucketMs);
+  const endTs = floorToBucket(effectiveUntil.getTime(), bucketMs);
+
+  const series: Array<{
+    capturedAt: string;
+    totalCCU: number | null;
+    avgCCU: number | null;
+    worldsWithData: number;
+  }> = [];
+
+  const pointers: Record<string, number> = {};
+  const lastKnown: Record<string, number | null> = {};
+  for (const id of ids) {
+    pointers[id] = 0;
+    lastKnown[id] = null;
+  }
+
+  for (let t = startTs; t <= endTs; t += bucketMs) {
+    let sum = 0;
+    let count = 0;
+
+    for (const id of ids) {
+      const arr = byWorld[id] ?? [];
+      let p = pointers[id] ?? 0;
+      while (p < arr.length && arr[p]!.ts <= t) {
+        lastKnown[id] = arr[p]!.ccu;
+        p++;
+      }
+      pointers[id] = p;
+
+      const v = lastKnown[id];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        sum += v;
+        count++;
+      }
+    }
+
+    series.push({
+      capturedAt: new Date(t).toISOString(),
+      totalCCU: count ? sum : null,
+      avgCCU: count ? sum / count : null,
+      worldsWithData: count,
+    });
+  }
+
+  const latestRows = (worlds as Array<World & { snapshots: CCUSnapshot[] }>).map((w) => ({
+    id: w.id,
+    name: w.name,
+    url: w.url,
+    isActive: w.isActive,
+    isFavorite: w.isFavorite,
+    latestCCU: w.snapshots[0]?.ccu ?? null,
+    latestCapturedAt: w.snapshots[0]?.capturedAt ?? null,
+  }));
+
+  const topWorlds = latestRows
+    .filter((w) => typeof w.latestCCU === "number")
+    .sort((a, b) => (b.latestCCU ?? 0) - (a.latestCCU ?? 0))
+    .slice(0, 10);
+
+  const withLatest = latestRows.filter((w) => w.latestCCU != null);
+  const currentTotal =
+    withLatest.length > 0
+      ? withLatest.reduce((acc, w) => acc + (w.latestCCU ?? 0), 0)
+      : null;
+  const currentAvg =
+    currentTotal == null || withLatest.length === 0
+      ? null
+      : currentTotal / withLatest.length;
+
+  res.json({
+    ok: true,
+    range: (range ?? "24h").toLowerCase(),
+    bucketMs,
+    worlds: {
+      total: worlds.length,
+      active: worlds.filter((w) => w.isActive).length,
+      withLatest: withLatest.length,
+    },
+    current: {
+      totalCCU: currentTotal,
+      avgCCU: currentAvg,
+      capturedAtMax: maxCapturedAt,
+    },
+    topWorlds,
+    series,
+  });
 });
 
 router.post("/:id/favorite", async (req, res) => {

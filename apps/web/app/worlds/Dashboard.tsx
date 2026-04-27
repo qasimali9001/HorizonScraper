@@ -256,7 +256,17 @@ export function Dashboard() {
           </div>
         </div>
         <div className="cardBody">
-          {error ? <p style={{ color: "var(--negative)" }}>{error}</p> : null}
+          {error ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <p style={{ color: "var(--negative)", margin: 0 }}>{error}</p>
+              <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                API base: <code>{API_BASE}</code> ·{" "}
+                <a href={`${API_BASE}/health`} target="_blank" rel="noreferrer">
+                  open /health
+                </a>
+              </p>
+            </div>
+          ) : null}
           {worlds == null ? (
             <p className="muted">Loading…</p>
           ) : rowsToRender.length === 0 ? (
