@@ -10,6 +10,7 @@ export function chromiumLaunchOptions(): LaunchOptions {
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
+      "--disable-seccomp-filter-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
     ],
