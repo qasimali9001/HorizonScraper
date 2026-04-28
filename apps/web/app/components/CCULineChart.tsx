@@ -135,24 +135,44 @@ export function CCULineChart({
     if (!Number.isFinite(startTs) || baseData.length === 0) return baseData;
 
     // Desired behavior:
-    // - If we have at least one point before startTs AND at least one point after startTs,
-    //   the clipped line segment will naturally start at the y-axis without adding synthetic points.
+    // - If we have a point before and after the boundary, add a single synthetic point at startTs
+    //   (linear interpolation) so the line starts on the y-axis without a visible gap.
     // - If we have NO point after startTs (collector gap), but we DO have a point before it,
-    //   add a single boundary point using the last known CCU so the chart isn't empty.
-    const hasAfter = baseData.some((p) => p.ts >= startTs);
-    const lastBefore = [...baseData].reverse().find((p) => p.ts < startTs);
+    //   add a boundary point using the last known CCU so the chart isn't empty.
+    // - Never add if a point already exists exactly at startTs.
+    const hasAtStart = baseData.some((p) => p.ts === startTs);
+    if (hasAtStart) return baseData;
 
-    if (!hasAfter && lastBefore) {
+    const lastBefore = [...baseData].reverse().find((p) => p.ts < startTs);
+    const firstAfter = baseData.find((p) => p.ts > startTs);
+
+    if (lastBefore && firstAfter) {
+      const dt = firstAfter.ts - lastBefore.ts;
+      const alpha = dt > 0 ? (startTs - lastBefore.ts) / dt : 0;
+      const ccu = Math.round(lastBefore.ccu + alpha * (firstAfter.ccu - lastBefore.ccu));
       return [
-        {
-          ts: startTs,
-          ccu: lastBefore.ccu,
-          label: new Date(startTs).toLocaleString(),
-        },
+        { ts: startTs, ccu, label: new Date(startTs).toLocaleString() },
         ...baseData,
       ];
     }
 
+    if (!firstAfter && lastBefore) {
+      return [
+        { ts: startTs, ccu: lastBefore.ccu, label: new Date(startTs).toLocaleString() },
+        ...baseData,
+      ];
+    }
+
+    // If we only have points after startTs, backfill a boundary point from the first known value
+    // so the line visually starts at the y-axis (common when the collector is slightly behind).
+    if (firstAfter && !lastBefore) {
+      return [
+        { ts: startTs, ccu: firstAfter.ccu, label: new Date(startTs).toLocaleString() },
+        ...baseData,
+      ];
+    }
+
+    // Otherwise leave as-is.
     return baseData;
   })();
 
