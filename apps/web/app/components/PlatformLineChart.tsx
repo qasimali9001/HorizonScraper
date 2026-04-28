@@ -93,15 +93,60 @@ export function PlatformLineChart({
   const axis = pickTimeAxis(maxTs - minTs);
   const ticks = axis.ticks(minTs, maxTs);
 
-  const maxTotal =
-    chartData.reduce((m, p) => (typeof p.totalCCU === "number" ? Math.max(m, p.totalCCU) : m), 0) || 1;
-  const markerY = maxTotal * 1.02;
+  function nearestPoint(ts: number): { ts: number; totalCCU: number | null } | null {
+    // chartData is already ordered ascending by time.
+    if (chartData.length === 0) return null;
+    let lo = 0;
+    let hi = chartData.length - 1;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (chartData[mid]!.ts < ts) lo = mid + 1;
+      else hi = mid;
+    }
+    const right = chartData[lo] ?? null;
+    const left = lo > 0 ? chartData[lo - 1] ?? null : null;
 
-  const eventPoints = (worldAddedEvents ?? []).map((e) => ({
-    ts: new Date(e.createdAt).getTime(),
-    markerY,
-    eventName: e.name,
-  }));
+    const candidates = [left, right].filter(
+      (v): v is NonNullable<typeof v> => v != null
+    );
+    let best: (typeof candidates)[number] | null = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const c of candidates) {
+      const d = Math.abs(c.ts - ts);
+      if (d < bestDist) {
+        bestDist = d;
+        best = c;
+      }
+    }
+    return best ? { ts: best.ts, totalCCU: best.totalCCU } : null;
+  }
+
+  // Snap event markers to the nearest platform datapoint so:
+  // - marker sits on the line (y) AND
+  // - marker aligns to the same x used by the tooltip (fixes "sticky" hover)
+  const bySnappedTs = new Map<number, { ts: number; y: number; names: string[]; at: string[] }>();
+  for (const e of worldAddedEvents ?? []) {
+    const rawTs = new Date(e.createdAt).getTime();
+    const p = nearestPoint(rawTs);
+    const y = typeof p?.totalCCU === "number" ? p.totalCCU : null;
+    if (!p || y == null || !Number.isFinite(y)) continue;
+
+    const existing = bySnappedTs.get(p.ts);
+    if (existing) {
+      existing.names.push(e.name);
+      existing.at.push(e.createdAt);
+    } else {
+      bySnappedTs.set(p.ts, { ts: p.ts, y, names: [e.name], at: [e.createdAt] });
+    }
+  }
+  const eventPoints = Array.from(bySnappedTs.values()).sort((a, b) => a.ts - b.ts);
+  const eventByTs = buildEventMap(eventPoints);
+
+  function buildEventMap(points: Array<{ ts: number; names: string[] }>) {
+    const map = new Map<number, string[]>();
+    for (const p of points) map.set(p.ts, p.names);
+    return map;
+  }
 
   function Square(props: any) {
     const { cx, cy } = props;
@@ -137,15 +182,41 @@ export function PlatformLineChart({
           />
           <YAxis stroke="rgba(255,255,255,0.6)" />
           <Tooltip
-            labelFormatter={(v) => axis.tooltipFormatter(Number(v))}
-            formatter={(value: any, name: any, item: any) => {
-              if (name === "markerY") {
-                const ev = item?.payload?.eventName;
-                return [String(ev ?? "World added"), "World added"];
-              }
-              if (typeof value !== "number") return ["—", String(name)];
-              const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
-              return [fmt, "Total CCU"];
+            shared
+            content={({ active, label, payload }) => {
+              if (!active || !payload || payload.length === 0) return null;
+              // Make tooltip snap to the LINE's x-value, not the scatter series.
+              const baseTs = Number(label);
+              const labelStr = axis.tooltipFormatter(baseTs);
+
+              const total = payload.find((p: any) => p?.dataKey === "totalCCU") as any;
+
+              const totalVal =
+                typeof total?.value === "number"
+                  ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(total.value)
+                  : "—";
+
+              const names = eventByTs.get(baseTs) ?? [];
+              const worldAddedLine =
+                names.length === 0
+                  ? null
+                  : `World added: ${names.join(", ")}`;
+
+              return (
+                <div
+                  style={{
+                    background: "rgba(0,0,0,0.85)",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    padding: 10,
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{labelStr}</div>
+                  <div style={{ color: "#60a5fa" }}>Total CCU: {totalVal}</div>
+                  {worldAddedLine ? (
+                    <div style={{ marginTop: 6, color: "#f59e0b" }}>{worldAddedLine}</div>
+                  ) : null}
+                </div>
+              );
             }}
             contentStyle={{ background: "rgba(0,0,0,0.85)", border: "1px solid rgba(255,255,255,0.15)" }}
           />
@@ -154,12 +225,15 @@ export function PlatformLineChart({
             dataKey="totalCCU"
             stroke="#60a5fa"
             strokeWidth={2}
-            dot={false}
+            // Keep chart visually clean, but ensure every point is hoverable so the tooltip
+            // tracks correctly across the whole timeline.
+            dot={{ r: 6, fill: "transparent", stroke: "transparent" }}
+            activeDot={{ r: 4 }}
             isAnimationActive={false}
             connectNulls={false}
           />
 
-          <Scatter data={eventPoints} dataKey="markerY" shape={<Square />} />
+          <Scatter data={eventPoints} dataKey="y" shape={<Square />} tooltipType="none" />
         </LineChart>
       </ResponsiveContainer>
     </div>
