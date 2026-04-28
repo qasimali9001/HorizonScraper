@@ -33,6 +33,11 @@ type TotalsResponse = {
     avgCCU: number | null;
     worldsWithData: number;
   }>;
+  worldAddedEvents: Array<{
+    id: string;
+    name: string;
+    createdAt: string;
+  }>;
 };
 
 function fmtInt(v: number | null) {
@@ -94,10 +99,6 @@ export function TotalsClient() {
                 <span style={{ fontWeight: 800 }}>{fmtInt(data.current.totalCCU)}</span>
               </div>
               <div className="pill">
-                <span className="muted">Current average CCU</span>
-                <span style={{ fontWeight: 800 }}>{fmtInt(data.current.avgCCU)}</span>
-              </div>
-              <div className="pill">
                 <span className="muted">Worlds</span>
                 <span style={{ fontWeight: 800 }}>
                   {data.worlds.total} total · {data.worlds.active} active
@@ -121,7 +122,7 @@ export function TotalsClient() {
               {data.series.length === 0 ? (
                 <p className="muted">No snapshots yet.</p>
               ) : (
-                <PlatformLineChart data={data.series} />
+                <PlatformLineChart data={data.series} worldAddedEvents={data.worldAddedEvents} />
               )}
             </div>
           </div>

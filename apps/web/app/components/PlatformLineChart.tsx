@@ -5,6 +5,7 @@ import {
   Line,
   LineChart,
   ResponsiveContainer,
+  Scatter,
   Tooltip,
   XAxis,
   YAxis,
@@ -13,7 +14,12 @@ import {
 type Point = {
   capturedAt: string;
   totalCCU: number | null;
-  avgCCU: number | null;
+};
+
+type WorldAddedEvent = {
+  id: string;
+  name: string;
+  createdAt: string;
 };
 
 function floorToDay(ts: number): number {
@@ -70,17 +76,51 @@ function pickTimeAxis(spanMs: number): {
   };
 }
 
-export function PlatformLineChart({ data }: { data: Point[] }) {
+export function PlatformLineChart({
+  data,
+  worldAddedEvents,
+}: {
+  data: Point[];
+  worldAddedEvents: WorldAddedEvent[];
+}) {
   const chartData = data.map((d) => ({
     ts: new Date(d.capturedAt).getTime(),
     totalCCU: d.totalCCU,
-    avgCCU: d.avgCCU,
   }));
 
   const minTs = chartData[0]?.ts ?? Date.now();
   const maxTs = chartData[chartData.length - 1]?.ts ?? Date.now();
   const axis = pickTimeAxis(maxTs - minTs);
   const ticks = axis.ticks(minTs, maxTs);
+
+  const maxTotal =
+    chartData.reduce((m, p) => (typeof p.totalCCU === "number" ? Math.max(m, p.totalCCU) : m), 0) || 1;
+  const markerY = maxTotal * 1.02;
+
+  const eventPoints = (worldAddedEvents ?? []).map((e) => ({
+    ts: new Date(e.createdAt).getTime(),
+    markerY,
+    eventName: e.name,
+  }));
+
+  function Square(props: any) {
+    const { cx, cy } = props;
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+    const size = 8;
+    return (
+      <rect
+        x={cx - size / 2}
+        y={cy - size / 2}
+        width={size}
+        height={size}
+        fill="#f59e0b"
+        stroke="rgba(0,0,0,0.35)"
+        strokeWidth={1}
+        rx={1}
+        ry={1}
+      />
+    );
+  }
 
   return (
     <div style={{ width: "100%", height: 380 }}>
@@ -95,19 +135,21 @@ export function PlatformLineChart({ data }: { data: Point[] }) {
             tickFormatter={(v) => axis.tickFormatter(Number(v))}
             stroke="rgba(255,255,255,0.6)"
           />
-          <YAxis yAxisId="left" stroke="rgba(255,255,255,0.6)" />
-          <YAxis yAxisId="right" orientation="right" stroke="rgba(255,255,255,0.45)" />
+          <YAxis stroke="rgba(255,255,255,0.6)" />
           <Tooltip
             labelFormatter={(v) => axis.tooltipFormatter(Number(v))}
-            formatter={(value, name) => {
+            formatter={(value: any, name: any, item: any) => {
+              if (name === "markerY") {
+                const ev = item?.payload?.eventName;
+                return [String(ev ?? "World added"), "World added"];
+              }
               if (typeof value !== "number") return ["—", String(name)];
               const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
-              return [fmt, name === "totalCCU" ? "Total CCU" : "Avg CCU"];
+              return [fmt, "Total CCU"];
             }}
             contentStyle={{ background: "rgba(0,0,0,0.85)", border: "1px solid rgba(255,255,255,0.15)" }}
           />
           <Line
-            yAxisId="left"
             type="monotone"
             dataKey="totalCCU"
             stroke="#60a5fa"
@@ -116,16 +158,8 @@ export function PlatformLineChart({ data }: { data: Point[] }) {
             isAnimationActive={false}
             connectNulls={false}
           />
-          <Line
-            yAxisId="right"
-            type="monotone"
-            dataKey="avgCCU"
-            stroke="rgba(255,255,255,0.55)"
-            strokeWidth={2}
-            dot={false}
-            isAnimationActive={false}
-            connectNulls={false}
-          />
+
+          <Scatter data={eventPoints} dataKey="markerY" shape={<Square />} />
         </LineChart>
       </ResponsiveContainer>
     </div>

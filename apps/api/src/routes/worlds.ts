@@ -264,6 +264,17 @@ router.get("/totals", async (req, res) => {
       ? null
       : currentTotal / withLatest.length;
 
+  const worldAddedEvents = (worlds as World[])
+    .filter((w) => {
+      const t = w.createdAt.getTime();
+      return t >= effectiveSince.getTime() && t <= effectiveUntil.getTime();
+    })
+    .map((w) => ({
+      id: w.id,
+      name: w.name,
+      createdAt: w.createdAt,
+    }));
+
   res.json({
     ok: true,
     range: (range ?? "24h").toLowerCase(),
@@ -280,6 +291,7 @@ router.get("/totals", async (req, res) => {
     },
     topWorlds,
     series,
+    worldAddedEvents,
   });
 });
 
