@@ -1,11 +1,12 @@
 "use client";
 
+import { useMemo } from "react";
 import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceDot,
   ResponsiveContainer,
-  Scatter,
   Tooltip,
   XAxis,
   YAxis,
@@ -83,10 +84,12 @@ export function PlatformLineChart({
   data: Point[];
   worldAddedEvents: WorldAddedEvent[];
 }) {
-  const chartData = data.map((d) => ({
-    ts: new Date(d.capturedAt).getTime(),
-    totalCCU: d.totalCCU,
-  }));
+  const chartData = data
+    .map((d) => ({
+      ts: new Date(d.capturedAt).getTime(),
+      totalCCU: d.totalCCU,
+    }))
+    .sort((a, b) => a.ts - b.ts);
 
   const minTs = chartData[0]?.ts ?? Date.now();
   const maxTs = chartData[chartData.length - 1]?.ts ?? Date.now();
@@ -140,16 +143,14 @@ export function PlatformLineChart({
     }
   }
   const eventPoints = Array.from(bySnappedTs.values()).sort((a, b) => a.ts - b.ts);
-  const eventByTs = buildEventMap(eventPoints);
-
-  function buildEventMap(points: Array<{ ts: number; names: string[] }>) {
+  const eventByTs = useMemo(() => {
     const map = new Map<number, string[]>();
-    for (const p of points) map.set(p.ts, p.names);
+    for (const p of eventPoints) map.set(p.ts, p.names);
     return map;
-  }
+  }, [eventPoints]);
 
-  function Square(props: any) {
-    const { cx, cy } = props;
+  function MarkerSquare(props: any) {
+    const { cx, cy } = props ?? {};
     if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
     const size = 8;
     return (
@@ -182,26 +183,16 @@ export function PlatformLineChart({
           />
           <YAxis stroke="rgba(255,255,255,0.6)" />
           <Tooltip
-            shared
+            labelFormatter={(v) => axis.tooltipFormatter(Number(v))}
             content={({ active, label, payload }) => {
               if (!active || !payload || payload.length === 0) return null;
-              // Make tooltip snap to the LINE's x-value, not the scatter series.
-              const baseTs = Number(label);
-              const labelStr = axis.tooltipFormatter(baseTs);
-
+              const ts = Number(label);
               const total = payload.find((p: any) => p?.dataKey === "totalCCU") as any;
-
               const totalVal =
                 typeof total?.value === "number"
                   ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(total.value)
                   : "—";
-
-              const names = eventByTs.get(baseTs) ?? [];
-              const worldAddedLine =
-                names.length === 0
-                  ? null
-                  : `World added: ${names.join(", ")}`;
-
+              const names = eventByTs.get(ts) ?? [];
               return (
                 <div
                   style={{
@@ -210,10 +201,12 @@ export function PlatformLineChart({
                     padding: 10,
                   }}
                 >
-                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{labelStr}</div>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{axis.tooltipFormatter(ts)}</div>
                   <div style={{ color: "#60a5fa" }}>Total CCU: {totalVal}</div>
-                  {worldAddedLine ? (
-                    <div style={{ marginTop: 6, color: "#f59e0b" }}>{worldAddedLine}</div>
+                  {names.length ? (
+                    <div style={{ marginTop: 6, color: "#f59e0b" }}>
+                      World added: {names.join(", ")}
+                    </div>
                   ) : null}
                 </div>
               );
@@ -225,15 +218,20 @@ export function PlatformLineChart({
             dataKey="totalCCU"
             stroke="#60a5fa"
             strokeWidth={2}
-            // Keep chart visually clean, but ensure every point is hoverable so the tooltip
-            // tracks correctly across the whole timeline.
-            dot={{ r: 6, fill: "transparent", stroke: "transparent" }}
-            activeDot={{ r: 4 }}
+            dot={false}
             isAnimationActive={false}
-            connectNulls={false}
+            connectNulls
           />
-
-          <Scatter data={eventPoints} dataKey="y" shape={<Square />} tooltipType="none" />
+          {eventPoints.map((e) => (
+            <ReferenceDot
+              key={e.ts}
+              x={e.ts}
+              y={e.y}
+              r={0}
+              ifOverflow="extendDomain"
+              shape={<MarkerSquare />}
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
     </div>
