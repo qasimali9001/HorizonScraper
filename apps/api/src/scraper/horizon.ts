@@ -29,16 +29,51 @@ export async function getCCU(url: string): Promise<GetCCUResult> {
   const worldUrl = normalizeWorldUrl(url);
   const startedAt = Date.now();
 
-  const browser = await chromium.launch(chromiumLaunchOptions());
-  const context = await browser.newContext({
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    locale: "en-US",
-  });
+  async function launchWithRetry(): Promise<import("playwright").Browser> {
+    const base = chromiumLaunchOptions();
+    const linuxExtra =
+      process.platform === "linux"
+        ? {
+            args: [
+              ...(base.args ?? []),
+              "--no-zygote",
+              "--single-process",
+              "--disable-features=site-per-process",
+            ],
+          }
+        : {};
+    const attempt = async (opts: any) => chromium.launch(opts);
+    try {
+      return await attempt(base as any);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Common Railway failure mode: chromium process dies immediately.
+      if (
+        msg.includes("Target page, context or browser has been closed") ||
+        msg.includes("SIGTRAP") ||
+        msg.toLowerCase().includes("browser has been closed")
+      ) {
+        // eslint-disable-next-line no-console
+        console.warn(`[ccu] chromium launch failed, retrying with extra flags: ${msg}`);
+        return await attempt({ ...base, ...(linuxExtra as any) });
+      }
+      throw err;
+    }
+  }
 
-  const page = await context.newPage();
+  let browser: import("playwright").Browser | null = null;
+  let context: import("playwright").BrowserContext | null = null;
+  let page: import("playwright").Page | null = null;
 
   try {
+    browser = await launchWithRetry();
+    context = await browser.newContext({
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      locale: "en-US",
+    });
+    page = await context.newPage();
+
     await page.goto(worldUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
 
     // 1) Try to discover internal XHR/fetch calls that expose CCU directly.
@@ -104,9 +139,9 @@ export async function getCCU(url: string): Promise<GetCCUResult> {
       },
     };
   } finally {
-    await page.close().catch(() => {});
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
+    await page?.close().catch(() => {});
+    await context?.close().catch(() => {});
+    await browser?.close().catch(() => {});
   }
 }
 
