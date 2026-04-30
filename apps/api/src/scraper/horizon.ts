@@ -74,7 +74,22 @@ export async function getCCU(url: string): Promise<GetCCUResult> {
     });
     page = await context.newPage();
 
-    await page.goto(worldUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    const resp = await page.goto(worldUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+    const status = resp?.status() ?? 0;
+    if (status === 403 || status === 429) {
+      return {
+        ccu: null,
+        method: "dom",
+        debug: {
+          blocked: true,
+          blockedReason: `http_${status}`,
+          elapsedMs: Date.now() - startedAt,
+        },
+      };
+    }
 
     // 1) Try to discover internal XHR/fetch calls that expose CCU directly.
     const discovered = await discoverCCURequestsOnPage(page, {
@@ -105,6 +120,23 @@ export async function getCCU(url: string): Promise<GetCCUResult> {
       const doc = globalThis as unknown as { document?: { body?: { innerText?: string } } };
       return doc.document?.body?.innerText ?? "";
     });
+    const low = bodyText.toLowerCase();
+    if (
+      low.includes("too many requests") ||
+      low.includes("temporarily blocked") ||
+      low.includes("try again later") ||
+      low.includes("rate limit")
+    ) {
+      return {
+        ccu: null,
+        method: "dom",
+        debug: {
+          blocked: true,
+          blockedReason: "block_page_text",
+          elapsedMs: Date.now() - startedAt,
+        },
+      };
+    }
     const extracted = extractCCUFromText(bodyText);
     if (extracted.ok) {
       return {

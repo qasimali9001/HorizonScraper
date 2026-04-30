@@ -14,12 +14,15 @@ model World {
   createdAt        DateTime      @default(now())
   isActive         Boolean       @default(true)
   isFavorite       Boolean       @default(false)
+  cooldownUntil    DateTime?
+  blockedCount     Int           @default(0)
   lastSuccessfulAt DateTime?
   lastError        String?
 
   snapshots        CCUSnapshot[]
 
   @@index([isFavorite, createdAt])
+  @@index([cooldownUntil])
 }
 
 model CCUSnapshot {
@@ -30,5 +33,20 @@ model CCUSnapshot {
   capturedAt DateTime @default(now())
 
   @@index([worldId, capturedAt])
+}
+
+model CollectorRun {
+  id              String   @id @default(uuid())
+  startedAt       DateTime @default(now())
+  finishedAt      DateTime?
+  status          String   @default("running") // running | ok | stopped | error
+  worldsTotal     Int      @default(0)
+  worldsProcessed Int      @default(0)
+  worldsSkipped   Int      @default(0)
+  blockedCount    Int      @default(0)
+  errorCount      Int      @default(0)
+  notes           String?
+
+  @@index([startedAt])
 }
 
