@@ -26,8 +26,18 @@ jobs:
           fi
           
           payload=$(printf '{"query":"mutation { serviceInstanceRestart(id: \\"%s\\") { id } }"}' "${SERVICE_INSTANCE_ID}")
-          curl -fsS https://backboard.railway.com/graphql/v2 \
+          
+          # Don't use -f so we can see GraphQL errors in the body.
+          resp=$(curl -sS https://backboard.railway.com/graphql/v2 \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
-            -d "${payload}"
+            -d "${payload}" \
+            -w "\nhttp_status=%{http_code}\n")
+          
+          echo "$resp"
+          status=$(echo "$resp" | sed -n 's/^http_status=//p')
+          if [ "${status:-}" != "200" ]; then
+            echo "Railway API call failed (http ${status:-unknown})"
+            exit 1
+          fi
 
