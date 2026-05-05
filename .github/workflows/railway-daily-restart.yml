@@ -16,6 +16,14 @@ jobs:
           SERVICE_INSTANCE_ID: ${{ secrets.RAILWAY_SERVICE_INSTANCE_ID }}
         run: |
           set -euo pipefail
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "Missing secret: RAILWAY_TOKEN"
+            exit 1
+          fi
+          if [ -z "${SERVICE_INSTANCE_ID:-}" ]; then
+            echo "Missing secret: RAILWAY_SERVICE_INSTANCE_ID"
+            exit 1
+          fi
           curl -fsS https://backboard.railway.com/graphql/v2 \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
