@@ -10,22 +10,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Restart Railway service instance
+      - name: Redeploy Railway service daily
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          SERVICE_INSTANCE_ID: ${{ secrets.RAILWAY_SERVICE_INSTANCE_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
         run: |
           set -euo pipefail
           if [ -z "${RAILWAY_TOKEN:-}" ]; then
             echo "Missing secret: RAILWAY_TOKEN"
             exit 1
           fi
-          if [ -z "${SERVICE_INSTANCE_ID:-}" ]; then
-            echo "Missing secret: RAILWAY_SERVICE_INSTANCE_ID"
+          if [ -z "${RAILWAY_ENVIRONMENT_ID:-}" ]; then
+            echo "Missing secret: RAILWAY_ENVIRONMENT_ID"
+            exit 1
+          fi
+          if [ -z "${RAILWAY_SERVICE_ID:-}" ]; then
+            echo "Missing secret: RAILWAY_SERVICE_ID"
             exit 1
           fi
           
-          payload=$(printf '{"query":"mutation { serviceInstanceRedeploy(id: \\"%s\\") { id } }"}' "${SERVICE_INSTANCE_ID}")
+          payload=$(printf '{"query":"mutation { serviceInstanceRedeployV2(environmentId: \\"%s\\", serviceId: \\"%s\\") }"}' "${RAILWAY_ENVIRONMENT_ID}" "${RAILWAY_SERVICE_ID}")
           
           # Don't use -f so we can see GraphQL errors in the body.
           resp=$(curl -sS https://backboard.railway.com/graphql/v2 \
