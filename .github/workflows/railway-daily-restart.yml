@@ -1,0 +1,23 @@
+name: Daily Railway restart
+
+on:
+  schedule:
+    - cron: "0 4 * * *" # daily 04:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Restart Railway service instance
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SERVICE_INSTANCE_ID: ${{ secrets.RAILWAY_SERVICE_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+          curl -fsS https://backboard.railway.com/graphql/v2 \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
+            -d "{\"query\":\"mutation(\\$id:String!){ serviceInstanceRestart(id:\\$id){ id } }\",\"variables\":{\"id\":\"${SERVICE_INSTANCE_ID}\"}}"
+
