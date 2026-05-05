@@ -30,7 +30,7 @@ jobs:
             exit 1
           fi
           
-          payload=$(printf '{"query":"mutation { serviceInstanceRedeployV2(environmentId: \\"%s\\", serviceId: \\"%s\\") }"}' "${RAILWAY_ENVIRONMENT_ID}" "${RAILWAY_SERVICE_ID}")
+          payload=$(printf '{"query":"mutation { serviceInstanceRedeploy(environmentId: \\"%s\\", serviceId: \\"%s\\") }"}' "${RAILWAY_ENVIRONMENT_ID}" "${RAILWAY_SERVICE_ID}")
           
           # Don't use -f so we can see GraphQL errors in the body.
           resp=$(curl -sS https://backboard.railway.com/graphql/v2 \
