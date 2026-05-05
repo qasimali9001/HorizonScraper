@@ -24,8 +24,10 @@ jobs:
             echo "Missing secret: RAILWAY_SERVICE_INSTANCE_ID"
             exit 1
           fi
+          
+          payload=$(printf '{"query":"mutation { serviceInstanceRestart(id: \\"%s\\") { id } }"}' "${SERVICE_INSTANCE_ID}")
           curl -fsS https://backboard.railway.com/graphql/v2 \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${RAILWAY_TOKEN}" \
-            -d "{\"query\":\"mutation(\\$id:String!){ serviceInstanceRestart(id:\\$id){ id } }\",\"variables\":{\"id\":\"${SERVICE_INSTANCE_ID}\"}}"
+            -d "${payload}"
 
