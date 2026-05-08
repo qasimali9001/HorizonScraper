@@ -148,9 +148,14 @@ export async function runCCUCollectorOnce(): Promise<void> {
         },
       });
 
+      const debug = result.debug as any;
+      const detectedPath = debug?.discovery?.detectedPath;
+      const rawMatch = debug?.rawMatch;
+      const extra =
+        detectedPath ? ` detectedPath=${detectedPath}` : rawMatch ? ` rawMatch="${rawMatch}"` : "";
       // eslint-disable-next-line no-console
       console.log(
-        `[ccu] world=${world.id} name="${world.name}" ccu=${result.ccu} method=${result.method} elapsedMs=${Date.now() - startedAt}`
+        `[ccu] world=${world.id} name="${world.name}" ccu=${result.ccu} method=${result.method}${extra} elapsedMs=${Date.now() - startedAt}`
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
